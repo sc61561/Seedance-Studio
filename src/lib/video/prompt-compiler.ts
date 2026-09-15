@@ -12,7 +12,7 @@ export type PromptCompilerInput = {
   consistencyLevel: ConsistencyLevel;
 };
 
-export const maxFinalPromptLength = 3_000;
+export const maxFinalPromptLength = 4_000;
 
 export function resolveGenerationMode(
   requestedMode: GenerationMode,

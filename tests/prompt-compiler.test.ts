@@ -64,7 +64,7 @@ describe("buildFinalPrompt", () => {
   });
 
   it("共享最终提示词长度上限", () => {
-    expect(maxFinalPromptLength).toBe(3_000);
+    expect(maxFinalPromptLength).toBe(4_000);
   });
 
   it("零张参考图时不编译不存在的参考图指令", () => {

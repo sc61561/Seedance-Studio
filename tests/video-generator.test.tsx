@@ -20,6 +20,12 @@ describe("VideoGenerator", () => {
     expect(markup).toContain('step="1"');
     expect(markup).toContain('multiple=""');
     expect(markup).toContain("最多 10 张");
+    expect(markup).toContain("生成模式");
+    expect(markup).toContain("连续关键帧");
+    expect(markup).toContain("高级设置");
+    expect(markup).toContain("镜头");
+    expect(markup).toContain("运动幅度");
+    expect(markup).toContain("一致性");
     expect(markup).toMatch(/<button[^>]*disabled/);
   });
 });

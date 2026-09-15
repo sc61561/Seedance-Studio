@@ -10,11 +10,11 @@ import {
   modelSupportsResolution,
   resolutionOptions,
 } from "@/lib/video/models";
+import { maxFinalPromptLength } from "@/lib/video/prompt-compiler";
 import { SeedanceProvider, VideoProviderError } from "@/lib/video/providers/seedance";
 
 export const runtime = "nodejs";
 
-const maxPromptLength = 2_000;
 const maxImageBytes = 8 * 1024 * 1024;
 const maxReferenceImages = 10;
 const imageDataUrlPattern = /^data:image\/(png|jpeg|webp);base64,([A-Za-z0-9+/]+={0,2})$/;
@@ -31,8 +31,8 @@ export async function POST(request: Request): Promise<Response> {
     return errorResponse("请输入提示词。");
   }
 
-  if (prompt.length > maxPromptLength) {
-    return errorResponse(`提示词不能超过 ${maxPromptLength} 个字符。`);
+  if (prompt.length > maxFinalPromptLength) {
+    return errorResponse(`提示词不能超过 ${maxFinalPromptLength} 个字符。`);
   }
 
   const referenceImages = resolveReferenceImages(payload);

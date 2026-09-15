@@ -29,6 +29,9 @@ describe("SeedanceProvider", () => {
       provider: "seedance",
       model: "",
       prompt: "一只橘猫在窗边打盹",
+      duration: 10,
+      resolution: "1080p",
+      aspectRatio: "9:16",
     });
 
     expect(result).toEqual({ taskId: "cgt-text" });
@@ -41,10 +44,11 @@ describe("SeedanceProvider", () => {
           "Content-Type": "application/json",
         }),
         body: JSON.stringify({
-          model: "doubao-seedance-1-5-pro-251215",
+          model: "doubao-seedance-2-5-260628",
           content: [{ type: "text", text: "一只橘猫在窗边打盹" }],
-          ratio: "16:9",
-          duration: 5,
+          ratio: "9:16",
+          resolution: "1080p",
+          duration: 10,
           watermark: false,
         }),
       }),
@@ -80,7 +84,7 @@ describe("SeedanceProvider", () => {
       "https://ark.cn-beijing.volces.com/api/v3/contents/generations/tasks",
       expect.objectContaining({
         body: JSON.stringify({
-          model: "doubao-seedance-1-5-pro-251215",
+          model: "doubao-seedance-2-5-260628",
           content: [
             { type: "text", text: "让画面中的猫眨眼" },
             {
@@ -89,7 +93,8 @@ describe("SeedanceProvider", () => {
               role: "first_frame",
             },
           ],
-          ratio: "adaptive",
+          ratio: "16:9",
+          resolution: "720p",
           duration: 5,
           watermark: false,
         }),

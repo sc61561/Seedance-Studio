@@ -75,7 +75,7 @@ describe("POST /api/generate", () => {
     });
   });
 
-  it("拒绝已停止服务的 Lite 图生视频模型", async () => {
+  it("拒绝已移出 MVP 的旧版模型", async () => {
     const response = await POST(
       requestFor({
         prompt: "生成一段视频",
@@ -86,6 +86,35 @@ describe("POST /api/generate", () => {
     expect(response.status).toBe(400);
     await expect(response.json()).resolves.toEqual({
       error: "请选择支持的官方 Seedance 模型。",
+    });
+  });
+
+  it("拒绝为 Fast 模型选择 1080p", async () => {
+    const response = await POST(
+      requestFor({
+        prompt: "生成一段视频",
+        model: "doubao-seedance-2-0-fast-260128",
+        resolution: "1080p",
+      }),
+    );
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toEqual({
+      error: "该模型不支持所选分辨率。",
+    });
+  });
+
+  it("拒绝不支持的分辨率", async () => {
+    const response = await POST(
+      requestFor({
+        prompt: "生成一段视频",
+        resolution: "4k",
+      }),
+    );
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toEqual({
+      error: "请选择支持的分辨率。",
     });
   });
 });

@@ -2,7 +2,14 @@
 
 import { FormEvent, useEffect, useRef, useState } from "react";
 
-import { defaultSeedanceModel, seedanceModels } from "@/lib/video/models";
+import {
+  aspectRatioOptions,
+  defaultSeedanceModel,
+  durationOptions,
+  getSeedanceModel,
+  resolutionOptions,
+  seedanceModels,
+} from "@/lib/video/models";
 
 type VideoTaskState =
   | "idle"
@@ -25,6 +32,9 @@ const acceptedImageTypes = new Set(["image/jpeg", "image/png", "image/webp"]);
 export function VideoGenerator() {
   const [prompt, setPrompt] = useState("");
   const [model, setModel] = useState(defaultSeedanceModel());
+  const [resolution, setResolution] = useState<(typeof resolutionOptions)[number]>("720p");
+  const [aspectRatio, setAspectRatio] = useState<(typeof aspectRatioOptions)[number]>("16:9");
+  const [duration, setDuration] = useState<(typeof durationOptions)[number]>(5);
   const [referenceImageDataUrl, setReferenceImageDataUrl] = useState<string>();
   const [referenceImageName, setReferenceImageName] = useState<string>();
   const [task, setTask] = useState<VideoTask>({ taskId: "", status: "idle" });
@@ -117,6 +127,9 @@ export function VideoGenerator() {
         body: JSON.stringify({
           prompt: prompt.trim(),
           model,
+          resolution,
+          aspectRatio,
+          duration,
           referenceImageDataUrl,
         }),
         signal: controller.signal,
@@ -148,6 +161,18 @@ export function VideoGenerator() {
       if (submitAbortRef.current === controller) {
         submitAbortRef.current = null;
       }
+    }
+  }
+
+  function handleModelChange(nextModel: string) {
+    const nextConfig = getSeedanceModel(nextModel);
+    if (!nextConfig) {
+      return;
+    }
+
+    setModel(nextConfig.id);
+    if (!nextConfig.resolutions.some((option) => option === resolution)) {
+      setResolution(nextConfig.resolutions[0]);
     }
   }
 
@@ -233,7 +258,7 @@ export function VideoGenerator() {
             <select
               className="w-full rounded-xl border border-zinc-700 bg-zinc-950 px-4 py-3 text-sm outline-none focus:border-zinc-400 disabled:cursor-not-allowed disabled:opacity-50"
               value={model}
-              onChange={(event) => setModel(event.target.value as typeof model)}
+              onChange={(event) => handleModelChange(event.target.value)}
               disabled={isGenerating}
             >
               {seedanceModels.map((item) => (
@@ -243,9 +268,53 @@ export function VideoGenerator() {
               ))}
             </select>
             <span className="mt-2 block text-xs text-zinc-500">
-              两个模型均支持文生视频与单张参考图作为首帧的图生视频。
+              四个模型均支持文生视频和单张参考图作为首帧的图生视频。
             </span>
           </label>
+
+          <div className="grid gap-4 sm:grid-cols-3">
+            <label className="block">
+              <span className="mb-2 block text-sm font-medium">分辨率</span>
+              <select
+                className="w-full rounded-xl border border-zinc-700 bg-zinc-950 px-3 py-3 text-sm outline-none focus:border-zinc-400 disabled:cursor-not-allowed disabled:opacity-50"
+                value={resolution}
+                onChange={(event) => setResolution(event.target.value as typeof resolution)}
+                disabled={isGenerating}
+              >
+                {(getSeedanceModel(model)?.resolutions ?? resolutionOptions).map((option) => (
+                  <option key={option} value={option}>{option}</option>
+                ))}
+              </select>
+            </label>
+
+            <label className="block">
+              <span className="mb-2 block text-sm font-medium">画面比例</span>
+              <select
+                className="w-full rounded-xl border border-zinc-700 bg-zinc-950 px-3 py-3 text-sm outline-none focus:border-zinc-400 disabled:cursor-not-allowed disabled:opacity-50"
+                value={aspectRatio}
+                onChange={(event) => setAspectRatio(event.target.value as typeof aspectRatio)}
+                disabled={isGenerating}
+              >
+                {aspectRatioOptions.map((option) => (
+                  <option key={option} value={option}>{option}</option>
+                ))}
+              </select>
+            </label>
+
+            <label className="block">
+              <span className="mb-2 block text-sm font-medium">视频时长</span>
+              <select
+                className="w-full rounded-xl border border-zinc-700 bg-zinc-950 px-3 py-3 text-sm outline-none focus:border-zinc-400 disabled:cursor-not-allowed disabled:opacity-50"
+                value={duration}
+                onChange={(event) => setDuration(Number(event.target.value) as typeof duration)}
+                disabled={isGenerating}
+              >
+                {durationOptions.map((option) => (
+                  <option key={option} value={option}>{option} 秒</option>
+                ))}
+              </select>
+            </label>
+          </div>
 
           <label className="block">
             <span className="mb-2 block text-sm font-medium">参考图（可选）</span>

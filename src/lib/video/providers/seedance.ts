@@ -28,7 +28,6 @@ export class VideoProviderError extends Error {
 
 export class SeedanceProvider implements VideoProvider {
   async createTask(input: CreateVideoInput): Promise<CreateVideoTaskResult> {
-    const hasReferenceImage = Boolean(input.referenceImageUrl);
     const model = input.model || defaultSeedanceModel();
     const content: Array<Record<string, unknown>> = [
       { type: "text", text: input.prompt },
@@ -47,8 +46,9 @@ export class SeedanceProvider implements VideoProvider {
       body: JSON.stringify({
         model,
         content,
-        ratio: hasReferenceImage ? "adaptive" : "16:9",
-        duration: 5,
+        ratio: input.aspectRatio ?? "16:9",
+        resolution: input.resolution ?? "720p",
+        duration: input.duration ?? 5,
         watermark: false,
       }),
     });

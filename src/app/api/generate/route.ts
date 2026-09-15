@@ -1,6 +1,13 @@
 import { Buffer } from "node:buffer";
 
-import { defaultSeedanceModel, getSeedanceModel } from "@/lib/video/models";
+import {
+  aspectRatioOptions,
+  defaultSeedanceModel,
+  durationOptions,
+  getSeedanceModel,
+  modelSupportsResolution,
+  resolutionOptions,
+} from "@/lib/video/models";
 import { SeedanceProvider, VideoProviderError } from "@/lib/video/providers/seedance";
 
 export const runtime = "nodejs";
@@ -38,11 +45,48 @@ export async function POST(request: Request): Promise<Response> {
     return errorResponse(modelResolution.error);
   }
 
+  const resolution = resolveOption(
+    payload.resolution,
+    resolutionOptions,
+    "720p",
+    "请选择支持的分辨率。",
+  );
+  if ("error" in resolution) {
+    return errorResponse(resolution.error);
+  }
+
+  if (!modelSupportsResolution(modelResolution.model, resolution.value)) {
+    return errorResponse("该模型不支持所选分辨率。");
+  }
+
+  const aspectRatio = resolveOption(
+    payload.aspectRatio,
+    aspectRatioOptions,
+    "16:9",
+    "请选择支持的画面比例。",
+  );
+  if ("error" in aspectRatio) {
+    return errorResponse(aspectRatio.error);
+  }
+
+  const duration = resolveOption(
+    payload.duration,
+    durationOptions,
+    5,
+    "请选择支持的视频时长。",
+  );
+  if ("error" in duration) {
+    return errorResponse(duration.error);
+  }
+
   try {
     const task = await new SeedanceProvider().createTask({
       provider: "seedance",
       model: modelResolution.model,
       prompt,
+      resolution: resolution.value,
+      aspectRatio: aspectRatio.value,
+      duration: duration.value,
       referenceImageUrl:
         typeof referenceImageDataUrl === "string" ? referenceImageDataUrl : undefined,
     });
@@ -107,6 +151,19 @@ function resolveModel(value: unknown): { model: string } | { error: string } {
   }
 
   return { model: model.id };
+}
+
+function resolveOption<T extends string | number>(
+  value: unknown,
+  options: readonly T[],
+  fallback: T,
+  error: string,
+): { value: T } | { error: string } {
+  if (value === undefined) {
+    return { value: fallback };
+  }
+
+  return options.includes(value as T) ? { value: value as T } : { error };
 }
 
 function hasMatchingImageSignature(mimeType: string, bytes: Buffer): boolean {

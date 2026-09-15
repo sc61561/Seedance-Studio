@@ -2,6 +2,8 @@
 
 import { FormEvent, useEffect, useRef, useState } from "react";
 
+import { defaultSeedanceModel, seedanceModels } from "@/lib/video/models";
+
 type VideoTaskState =
   | "idle"
   | "submitting"
@@ -22,6 +24,7 @@ const acceptedImageTypes = new Set(["image/jpeg", "image/png", "image/webp"]);
 
 export function VideoGenerator() {
   const [prompt, setPrompt] = useState("");
+  const [model, setModel] = useState(defaultSeedanceModel());
   const [referenceImageDataUrl, setReferenceImageDataUrl] = useState<string>();
   const [referenceImageName, setReferenceImageName] = useState<string>();
   const [task, setTask] = useState<VideoTask>({ taskId: "", status: "idle" });
@@ -43,6 +46,7 @@ export function VideoGenerator() {
   const clearReferenceImage = () => {
     setReferenceImageDataUrl(undefined);
     setReferenceImageName(undefined);
+    setModel(defaultSeedanceModel());
   };
 
   useEffect(() => {
@@ -112,6 +116,7 @@ export function VideoGenerator() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           prompt: prompt.trim(),
+          model,
           referenceImageDataUrl,
         }),
         signal: controller.signal,
@@ -221,6 +226,25 @@ export function VideoGenerator() {
               disabled={isGenerating}
               required
             />
+          </label>
+
+          <label className="block">
+            <span className="mb-2 block text-sm font-medium">选择模型</span>
+            <select
+              className="w-full rounded-xl border border-zinc-700 bg-zinc-950 px-4 py-3 text-sm outline-none focus:border-zinc-400 disabled:cursor-not-allowed disabled:opacity-50"
+              value={model}
+              onChange={(event) => setModel(event.target.value as typeof model)}
+              disabled={isGenerating}
+            >
+              {seedanceModels.map((item) => (
+                <option key={item.id} value={item.id}>
+                  {item.label}
+                </option>
+              ))}
+            </select>
+            <span className="mt-2 block text-xs text-zinc-500">
+              两个模型均支持文生视频与单张参考图作为首帧的图生视频。
+            </span>
           </label>
 
           <label className="block">

@@ -41,7 +41,7 @@ describe("SeedanceProvider", () => {
           "Content-Type": "application/json",
         }),
         body: JSON.stringify({
-          model: "doubao-seedance-1-0-pro-250528",
+          model: "doubao-seedance-1-5-pro-251215",
           content: [{ type: "text", text: "一只橘猫在窗边打盹" }],
           ratio: "16:9",
           duration: 5,
@@ -49,6 +49,20 @@ describe("SeedanceProvider", () => {
         }),
       }),
     );
+  });
+
+  it("使用用户选择的官方 1.0 Pro 模型", async () => {
+    fetchMock.mockResolvedValueOnce(createResponse({ id: "cgt-selected-model" }));
+
+    await new SeedanceProvider().createTask({
+      provider: "seedance",
+      model: "doubao-seedance-1-0-pro-250528",
+      prompt: "海边日落",
+    });
+
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toMatchObject({
+      model: "doubao-seedance-1-0-pro-250528",
+    });
   });
 
   it("将参考图 data URL 映射为图生视频内容", async () => {
@@ -66,10 +80,14 @@ describe("SeedanceProvider", () => {
       "https://ark.cn-beijing.volces.com/api/v3/contents/generations/tasks",
       expect.objectContaining({
         body: JSON.stringify({
-          model: "doubao-seedance-1-0-lite-i2v-250428",
+          model: "doubao-seedance-1-5-pro-251215",
           content: [
             { type: "text", text: "让画面中的猫眨眼" },
-            { type: "image_url", image_url: { url: referenceImageUrl } },
+            {
+              type: "image_url",
+              image_url: { url: referenceImageUrl },
+              role: "first_frame",
+            },
           ],
           ratio: "adaptive",
           duration: 5,

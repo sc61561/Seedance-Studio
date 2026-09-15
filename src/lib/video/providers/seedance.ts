@@ -1,5 +1,6 @@
 import "server-only";
 
+import { defaultSeedanceModel } from "@/lib/video/models";
 import type { VideoProvider } from "@/lib/video/provider";
 import type {
   CreateVideoInput,
@@ -9,8 +10,6 @@ import type {
 } from "@/lib/video/types";
 
 const arkBaseUrl = "https://ark.cn-beijing.volces.com/api/v3";
-const textToVideoModel = "doubao-seedance-1-0-pro-250528";
-const imageToVideoModel = "doubao-seedance-1-0-lite-i2v-250428";
 
 type ArkTaskResponse = {
   id?: string;
@@ -30,8 +29,7 @@ export class VideoProviderError extends Error {
 export class SeedanceProvider implements VideoProvider {
   async createTask(input: CreateVideoInput): Promise<CreateVideoTaskResult> {
     const hasReferenceImage = Boolean(input.referenceImageUrl);
-    const model =
-      input.model || (hasReferenceImage ? imageToVideoModel : textToVideoModel);
+    const model = input.model || defaultSeedanceModel();
     const content: Array<Record<string, unknown>> = [
       { type: "text", text: input.prompt },
     ];
@@ -40,6 +38,7 @@ export class SeedanceProvider implements VideoProvider {
       content.push({
         type: "image_url",
         image_url: { url: input.referenceImageUrl },
+        role: "first_frame",
       });
     }
 

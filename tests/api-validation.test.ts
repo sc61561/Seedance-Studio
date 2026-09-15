@@ -60,4 +60,32 @@ describe("POST /api/generate", () => {
       error: "参考图不能超过 8 MB。",
     });
   });
+
+  it("拒绝非官方的模型标识", async () => {
+    const response = await POST(
+      requestFor({
+        prompt: "生成一段视频",
+        model: "unapproved-model",
+      }),
+    );
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toEqual({
+      error: "请选择支持的官方 Seedance 模型。",
+    });
+  });
+
+  it("拒绝已停止服务的 Lite 图生视频模型", async () => {
+    const response = await POST(
+      requestFor({
+        prompt: "生成一段视频",
+        model: "doubao-seedance-1-0-lite-i2v-250428",
+      }),
+    );
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toEqual({
+      error: "请选择支持的官方 Seedance 模型。",
+    });
+  });
 });

@@ -1,5 +1,6 @@
 import { Buffer } from "node:buffer";
 
+import { defaultSeedanceModel, getSeedanceModel } from "@/lib/video/models";
 import { SeedanceProvider, VideoProviderError } from "@/lib/video/providers/seedance";
 
 export const runtime = "nodejs";
@@ -32,10 +33,15 @@ export async function POST(request: Request): Promise<Response> {
     }
   }
 
+  const modelResolution = resolveModel(payload.model);
+  if ("error" in modelResolution) {
+    return errorResponse(modelResolution.error);
+  }
+
   try {
     const task = await new SeedanceProvider().createTask({
       provider: "seedance",
-      model: "",
+      model: modelResolution.model,
       prompt,
       referenceImageUrl:
         typeof referenceImageDataUrl === "string" ? referenceImageDataUrl : undefined,
@@ -86,6 +92,21 @@ function validateReferenceImage(value: unknown): string | null {
   return hasMatchingImageSignature(match[1], imageBytes)
     ? null
     : "参考图内容不是有效的 PNG、JPEG 或 WebP 图片。";
+}
+
+function resolveModel(value: unknown): { model: string } | { error: string } {
+  if (value !== undefined && typeof value !== "string") {
+    return { error: "请选择支持的官方 Seedance 模型。" };
+  }
+
+  const modelId = value?.trim() || defaultSeedanceModel();
+  const model = getSeedanceModel(modelId);
+
+  if (!model) {
+    return { error: "请选择支持的官方 Seedance 模型。" };
+  }
+
+  return { model: model.id };
 }
 
 function hasMatchingImageSignature(mimeType: string, bytes: Buffer): boolean {

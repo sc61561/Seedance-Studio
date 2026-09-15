@@ -19,7 +19,7 @@ describe("VideoGenerator", () => {
     expect(markup).toContain('max="30"');
     expect(markup).toContain('step="1"');
     expect(markup).toContain('multiple=""');
-    expect(markup).toContain("最多 4 张");
+    expect(markup).toContain("最多 10 张");
     expect(markup).toMatch(/<button[^>]*disabled/);
   });
 });

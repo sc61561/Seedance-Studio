@@ -27,6 +27,7 @@ type VideoTask = {
 };
 
 const maxImageBytes = 8 * 1024 * 1024;
+const maxReferenceImages = 10;
 const acceptedImageTypes = new Set(["image/jpeg", "image/png", "image/webp"]);
 
 export function VideoGenerator() {
@@ -80,9 +81,9 @@ export function VideoGenerator() {
       return;
     }
 
-    if (selectedFiles.length > 4) {
+    if (selectedFiles.length > maxReferenceImages) {
       clearReferenceImage();
-      setTask({ taskId: "", status: "failed", error: "参考图最多可上传 4 张。" });
+      setTask({ taskId: "", status: "failed", error: `参考图最多可上传 ${maxReferenceImages} 张。` });
       return;
     }
 
@@ -308,7 +309,7 @@ export function VideoGenerator() {
           </div>
 
           <label className="block">
-            <span className="mb-2 block text-sm font-medium">参考图（可选，最多 4 张）</span>
+            <span className="mb-2 block text-sm font-medium">参考图（可选，最多 10 张）</span>
             <input
               className="block w-full cursor-pointer rounded-xl border border-dashed border-zinc-700 bg-zinc-950 px-3 py-3 text-sm text-zinc-300 file:mr-3 file:rounded-lg file:border-0 file:bg-zinc-800 file:px-3 file:py-2 file:text-sm file:text-zinc-100 hover:file:bg-zinc-700"
               type="file"
@@ -320,7 +321,7 @@ export function VideoGenerator() {
             <span className="mt-2 block text-xs text-zinc-500">
               {referenceImageNames.length > 0
                 ? `已选择 ${referenceImageNames.length} 张：${referenceImageNames.join("、")}`
-                : "支持 PNG、JPEG、WebP，最多 4 张，总大小不超过 8 MB"}
+                : "支持 PNG、JPEG、WebP，最多 10 张，总大小不超过 8 MB"}
             </span>
           </label>
 

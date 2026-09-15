@@ -16,7 +16,7 @@ export const runtime = "nodejs";
 
 const maxPromptLength = 2_000;
 const maxImageBytes = 8 * 1024 * 1024;
-const maxReferenceImages = 4;
+const maxReferenceImages = 10;
 const imageDataUrlPattern = /^data:image\/(png|jpeg|webp);base64,([A-Za-z0-9+/]+={0,2})$/;
 
 export async function POST(request: Request): Promise<Response> {

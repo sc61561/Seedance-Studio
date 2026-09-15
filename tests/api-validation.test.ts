@@ -17,6 +17,13 @@ describe("POST /api/generate", () => {
     await expect(response.json()).resolves.toEqual({ error: "请输入提示词。" });
   });
 
+  it("拒绝超过 3000 字符的最终提示词", async () => {
+    const response = await POST(requestFor({ prompt: "a".repeat(3_001) }));
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toEqual({ error: "提示词不能超过 3000 个字符。" });
+  });
+
   it("拒绝不支持的参考图 data URL", async () => {
     const response = await POST(
       requestFor({

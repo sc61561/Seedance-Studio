@@ -103,26 +103,26 @@ describe("POST /api/generate", () => {
     });
   });
 
-  it("拒绝为 Fast 模型选择 1080p", async () => {
+  it("拒绝非当前配置的推理接入点", async () => {
     const response = await POST(
       requestFor({
         prompt: "生成一段视频",
-        model: "doubao-seedance-2-0-fast-260128",
+        model: "ep-another-endpoint",
         resolution: "1080p",
       }),
     );
 
     expect(response.status).toBe(400);
     await expect(response.json()).resolves.toEqual({
-      error: "该模型不支持所选分辨率。",
+      error: "请选择支持的官方 Seedance 模型。",
     });
   });
 
-  it("允许为 Seedance 2.5 选择 1080p", async () => {
+  it("允许为已配置的推理接入点选择 1080p", async () => {
     const response = await POST(
       requestFor({
         prompt: "生成一段视频",
-        model: "doubao-seedance-2-5-260628",
+        model: "ep-20260829185420-qnfvz",
         resolution: "1080p",
       }),
     );

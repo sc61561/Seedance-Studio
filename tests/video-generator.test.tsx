@@ -8,8 +8,9 @@ describe("VideoGenerator", () => {
     const markup = renderToStaticMarkup(<VideoGenerator />);
 
     expect(markup).toContain("请输入你想生成的视频内容");
-    expect(markup).toContain("选择模型");
-    expect(markup).toContain("Seedance 2.5（最新一代）");
+    expect(markup).toContain("已配置模型");
+    expect(markup).toContain("火山方舟接入点已配置");
+    expect(markup).not.toContain("选择模型");
     expect(markup).toContain("分辨率");
     expect(markup).toContain("画面比例");
     expect(markup).toContain("视频时长");

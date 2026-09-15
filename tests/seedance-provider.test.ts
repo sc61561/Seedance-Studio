@@ -44,7 +44,7 @@ describe("SeedanceProvider", () => {
           "Content-Type": "application/json",
         }),
         body: JSON.stringify({
-          model: "doubao-seedance-2-5-260628",
+          model: "ep-20260829185420-qnfvz",
           content: [{ type: "text", text: "一只橘猫在窗边打盹" }],
           ratio: "9:16",
           resolution: "1080p",
@@ -55,17 +55,17 @@ describe("SeedanceProvider", () => {
     );
   });
 
-  it("使用用户选择的官方 1.0 Pro 模型", async () => {
+  it("使用配置好的火山方舟推理接入点", async () => {
     fetchMock.mockResolvedValueOnce(createResponse({ id: "cgt-selected-model" }));
 
     await new SeedanceProvider().createTask({
       provider: "seedance",
-      model: "doubao-seedance-1-0-pro-250528",
+      model: "ep-20260829185420-qnfvz",
       prompt: "海边日落",
     });
 
     expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toMatchObject({
-      model: "doubao-seedance-1-0-pro-250528",
+      model: "ep-20260829185420-qnfvz",
     });
   });
 
@@ -84,13 +84,13 @@ describe("SeedanceProvider", () => {
       "https://ark.cn-beijing.volces.com/api/v3/contents/generations/tasks",
       expect.objectContaining({
         body: JSON.stringify({
-          model: "doubao-seedance-2-5-260628",
+          model: "ep-20260829185420-qnfvz",
           content: [
             { type: "text", text: "让画面中的猫眨眼" },
             {
               type: "image_url",
               image_url: { url: referenceImageUrl },
-              role: "first_frame",
+              role: "reference_image",
             },
           ],
           ratio: "16:9",
@@ -102,7 +102,7 @@ describe("SeedanceProvider", () => {
     );
   });
 
-  it("将多张图片映射为首帧和参考图", async () => {
+  it("将多张图片映射为方舟参考图内容", async () => {
     fetchMock.mockResolvedValueOnce(createResponse({ id: "cgt-multi-image" }));
     const imageUrls = [
       "data:image/png;base64,Zmlyc3Q=",
@@ -111,7 +111,7 @@ describe("SeedanceProvider", () => {
 
     await new SeedanceProvider().createTask({
       provider: "seedance",
-      model: "doubao-seedance-2-5-260628",
+      model: "ep-20260829185420-qnfvz",
       prompt: "让两个角色在雨中相遇",
       referenceImageUrls: imageUrls,
     });
@@ -119,7 +119,7 @@ describe("SeedanceProvider", () => {
     expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toMatchObject({
       content: [
         { type: "text", text: "让两个角色在雨中相遇" },
-        { type: "image_url", image_url: { url: imageUrls[0] }, role: "first_frame" },
+        { type: "image_url", image_url: { url: imageUrls[0] }, role: "reference_image" },
         { type: "image_url", image_url: { url: imageUrls[1] }, role: "reference_image" },
       ],
     });

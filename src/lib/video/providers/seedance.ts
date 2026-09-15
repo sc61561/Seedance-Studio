@@ -39,11 +39,11 @@ export class SeedanceProvider implements VideoProvider {
         ? [input.referenceImageUrl]
         : [];
 
-    referenceImageUrls.forEach((url, index) => {
+    referenceImageUrls.forEach((url) => {
       content.push({
         type: "image_url",
         image_url: { url },
-        role: index === 0 ? "first_frame" : "reference_image",
+        role: "reference_image",
       });
     });
 

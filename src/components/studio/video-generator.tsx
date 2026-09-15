@@ -6,9 +6,7 @@ import {
   aspectRatioOptions,
   defaultSeedanceModel,
   durationOptions,
-  getSeedanceModel,
   resolutionOptions,
-  seedanceModels,
 } from "@/lib/video/models";
 
 type VideoTaskState =
@@ -172,18 +170,6 @@ export function VideoGenerator() {
     }
   }
 
-  function handleModelChange(nextModel: string) {
-    const nextConfig = getSeedanceModel(nextModel);
-    if (!nextConfig) {
-      return;
-    }
-
-    setModel(nextConfig.id);
-    if (!nextConfig.resolutions.some((option) => option === resolution)) {
-      setResolution(nextConfig.resolutions[0]);
-    }
-  }
-
   async function pollTask(taskId: string) {
     if (!isMountedRef.current) {
       return;
@@ -261,24 +247,11 @@ export function VideoGenerator() {
             />
           </label>
 
-          <label className="block">
-            <span className="mb-2 block text-sm font-medium">选择模型</span>
-            <select
-              className="w-full rounded-xl border border-zinc-700 bg-zinc-950 px-4 py-3 text-sm outline-none focus:border-zinc-400 disabled:cursor-not-allowed disabled:opacity-50"
-              value={model}
-              onChange={(event) => handleModelChange(event.target.value)}
-              disabled={isGenerating}
-            >
-              {seedanceModels.map((item) => (
-                <option key={item.id} value={item.id}>
-                  {item.label}
-                </option>
-              ))}
-            </select>
-            <span className="mt-2 block text-xs text-zinc-500">
-              四个模型均支持文生视频和参考图驱动的基础图生视频。
-            </span>
-          </label>
+          <section className="rounded-xl border border-zinc-800 bg-zinc-950 px-4 py-3">
+            <h2 className="text-sm font-medium">已配置模型</h2>
+            <p className="mt-1 text-sm text-zinc-300">Seedance 视频生成</p>
+            <p className="mt-1 text-xs text-zinc-500">火山方舟接入点已配置，只需填写 API Key 即可使用。</p>
+          </section>
 
           <div className="grid gap-4 sm:grid-cols-3">
             <label className="block">
@@ -289,7 +262,7 @@ export function VideoGenerator() {
                 onChange={(event) => setResolution(event.target.value as typeof resolution)}
                 disabled={isGenerating}
               >
-                {(getSeedanceModel(model)?.resolutions ?? resolutionOptions).map((option) => (
+                {resolutionOptions.map((option) => (
                   <option key={option} value={option}>{option}</option>
                 ))}
               </select>

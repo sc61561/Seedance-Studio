@@ -6,26 +6,13 @@ export type Resolution = (typeof resolutionOptions)[number];
 export type AspectRatio = (typeof aspectRatioOptions)[number];
 export type Duration = (typeof durationOptions)[number];
 
+export const seedanceEndpointId = "ep-20260829185420-qnfvz";
+
 export const seedanceModels = [
   {
-    id: "doubao-seedance-2-5-260628",
-    label: "Seedance 2.5（最新一代）",
+    id: seedanceEndpointId,
+    label: "Seedance 视频生成（已配置）",
     resolutions: ["480p", "720p", "1080p"],
-  },
-  {
-    id: "doubao-seedance-2-0-260128",
-    label: "Seedance 2.0（质量优先）",
-    resolutions: ["480p", "720p", "1080p"],
-  },
-  {
-    id: "doubao-seedance-2-0-fast-260128",
-    label: "Seedance 2.0 Fast（速度/成本平衡）",
-    resolutions: ["480p", "720p"],
-  },
-  {
-    id: "doubao-seedance-2-0-mini-260615",
-    label: "Seedance 2.0 Mini（批量生成）",
-    resolutions: ["480p", "720p"],
   },
 ] as const satisfies ReadonlyArray<{
   id: string;
@@ -36,7 +23,7 @@ export const seedanceModels = [
 export type SeedanceModelId = (typeof seedanceModels)[number]["id"];
 
 export function defaultSeedanceModel(): SeedanceModelId {
-  return "doubao-seedance-2-5-260628";
+  return seedanceEndpointId;
 }
 
 export function getSeedanceModel(model: string) {

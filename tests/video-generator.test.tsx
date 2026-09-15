@@ -13,6 +13,9 @@ describe("VideoGenerator", () => {
     expect(markup).toContain("分辨率");
     expect(markup).toContain("画面比例");
     expect(markup).toContain("视频时长");
+    expect(markup).toContain('type="range"');
+    expect(markup).toContain('min="5"');
+    expect(markup).toContain('max="10"');
     expect(markup).toMatch(/<button[^>]*disabled/);
   });
 });

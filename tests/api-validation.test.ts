@@ -104,6 +104,21 @@ describe("POST /api/generate", () => {
     });
   });
 
+  it("允许为 Seedance 2.5 选择 1080p", async () => {
+    const response = await POST(
+      requestFor({
+        prompt: "生成一段视频",
+        model: "doubao-seedance-2-5-260628",
+        resolution: "1080p",
+      }),
+    );
+
+    expect(response.status).toBe(503);
+    await expect(response.json()).resolves.toEqual({
+      error: "服务器尚未配置 Seedance API Key。",
+    });
+  });
+
   it("拒绝不支持的分辨率", async () => {
     const response = await POST(
       requestFor({

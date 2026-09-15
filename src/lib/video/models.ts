@@ -10,7 +10,7 @@ export const seedanceModels = [
   {
     id: "doubao-seedance-2-5-260628",
     label: "Seedance 2.5（最新一代）",
-    resolutions: ["480p", "720p"],
+    resolutions: ["480p", "720p", "1080p"],
   },
   {
     id: "doubao-seedance-2-0-260128",

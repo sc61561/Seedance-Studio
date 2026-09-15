@@ -302,17 +302,25 @@ export function VideoGenerator() {
             </label>
 
             <label className="block">
-              <span className="mb-2 block text-sm font-medium">视频时长</span>
-              <select
-                className="w-full rounded-xl border border-zinc-700 bg-zinc-950 px-3 py-3 text-sm outline-none focus:border-zinc-400 disabled:cursor-not-allowed disabled:opacity-50"
+              <span className="mb-2 flex items-center justify-between text-sm font-medium">
+                <span>视频时长</span>
+                <span className="text-zinc-400">{duration} 秒</span>
+              </span>
+              <input
+                className="w-full accent-white disabled:cursor-not-allowed disabled:opacity-50"
+                type="range"
+                min={5}
+                max={10}
+                step={5}
                 value={duration}
                 onChange={(event) => setDuration(Number(event.target.value) as typeof duration)}
                 disabled={isGenerating}
-              >
-                {durationOptions.map((option) => (
-                  <option key={option} value={option}>{option} 秒</option>
-                ))}
-              </select>
+                aria-label="视频时长"
+              />
+              <span className="mt-1 flex justify-between text-xs text-zinc-500">
+                <span>{durationOptions[0]} 秒</span>
+                <span>{durationOptions[durationOptions.length - 1]} 秒</span>
+              </span>
             </label>
           </div>
 

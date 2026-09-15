@@ -1,0 +1,220 @@
+"use client";
+
+import { FormEvent, useEffect, useRef, useState } from "react";
+
+type VideoTaskState =
+  | "idle"
+  | "submitting"
+  | "queued"
+  | "processing"
+  | "succeeded"
+  | "failed";
+
+type VideoTask = {
+  taskId: string;
+  status: VideoTaskState;
+  videoUrl?: string;
+  error?: string;
+};
+
+const maxImageBytes = 8 * 1024 * 1024;
+const acceptedImageTypes = new Set(["image/jpeg", "image/png", "image/webp"]);
+
+export function VideoGenerator() {
+  const [prompt, setPrompt] = useState("");
+  const [referenceImageDataUrl, setReferenceImageDataUrl] = useState<string>();
+  const [referenceImageName, setReferenceImageName] = useState<string>();
+  const [task, setTask] = useState<VideoTask>({ taskId: "", status: "idle" });
+  const pollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const stopPolling = () => {
+    if (pollTimerRef.current) {
+      clearTimeout(pollTimerRef.current);
+      pollTimerRef.current = null;
+    }
+  };
+
+  useEffect(() => {
+    return () => stopPolling();
+  }, []);
+
+  const isGenerating = task.status === "submitting" || task.status === "queued" || task.status === "processing";
+
+  async function handleReferenceImageChange(file: File | undefined) {
+    if (!file) {
+      setReferenceImageDataUrl(undefined);
+      setReferenceImageName(undefined);
+      return;
+    }
+
+    if (!acceptedImageTypes.has(file.type)) {
+      setTask({ taskId: "", status: "failed", error: "参考图仅支持 PNG、JPEG 或 WebP 格式。" });
+      return;
+    }
+
+    if (file.size > maxImageBytes) {
+      setTask({ taskId: "", status: "failed", error: "参考图不能超过 8 MB。" });
+      return;
+    }
+
+    try {
+      const dataUrl = await readFileAsDataUrl(file);
+      setReferenceImageDataUrl(dataUrl);
+      setReferenceImageName(file.name);
+      setTask({ taskId: "", status: "idle" });
+    } catch {
+      setTask({ taskId: "", status: "failed", error: "读取参考图失败，请重新选择。" });
+    }
+  }
+
+  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (isGenerating || !prompt.trim()) {
+      return;
+    }
+
+    stopPolling();
+    setTask({ taskId: "", status: "submitting" });
+
+    try {
+      const response = await fetch("/api/generate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          prompt: prompt.trim(),
+          referenceImageDataUrl,
+        }),
+      });
+      const payload = (await response.json()) as { taskId?: string; error?: string };
+
+      if (!response.ok || !payload.taskId) {
+        throw new Error(payload.error ?? "视频任务创建失败，请稍后重试。");
+      }
+
+      const nextTask = { taskId: payload.taskId, status: "queued" as const };
+      setTask(nextTask);
+      await pollTask(nextTask.taskId);
+    } catch (error) {
+      setTask({
+        taskId: "",
+        status: "failed",
+        error: error instanceof Error ? error.message : "视频任务创建失败，请稍后重试。",
+      });
+    }
+  }
+
+  async function pollTask(taskId: string) {
+    try {
+      const response = await fetch(`/api/task/${encodeURIComponent(taskId)}`, {
+        cache: "no-store",
+      });
+      const payload = (await response.json()) as VideoTask;
+
+      if (!response.ok) {
+        throw new Error(payload.error ?? "视频任务查询失败，请稍后重试。");
+      }
+
+      setTask(payload);
+      if (payload.status === "succeeded" || payload.status === "failed") {
+        stopPolling();
+        return;
+      }
+
+      pollTimerRef.current = setTimeout(() => void pollTask(taskId), 5_000);
+    } catch (error) {
+      setTask({
+        taskId,
+        status: "failed",
+        error: error instanceof Error ? error.message : "视频任务查询失败，请稍后重试。",
+      });
+      stopPolling();
+    }
+  }
+
+  return (
+    <main className="min-h-screen bg-zinc-950 px-4 py-10 text-zinc-100 sm:px-6">
+      <section className="mx-auto w-full max-w-2xl rounded-2xl border border-zinc-800 bg-zinc-900 p-5 shadow-2xl shadow-black/20 sm:p-8">
+        <header className="mb-8">
+          <p className="text-sm font-medium text-zinc-400">Seedance Studio</p>
+          <h1 className="mt-2 text-2xl font-semibold tracking-tight">视频生成</h1>
+          <p className="mt-2 text-sm leading-6 text-zinc-400">
+            输入提示词，可选上传一张参考图，然后等待视频生成完成。
+          </p>
+        </header>
+
+        <form className="space-y-6" onSubmit={handleSubmit}>
+          <label className="block">
+            <span className="mb-2 block text-sm font-medium">提示词</span>
+            <textarea
+              className="min-h-36 w-full resize-y rounded-xl border border-zinc-700 bg-zinc-950 px-4 py-3 text-sm leading-6 outline-none placeholder:text-zinc-600 focus:border-zinc-400"
+              value={prompt}
+              onChange={(event) => setPrompt(event.target.value)}
+              placeholder="请输入你想生成的视频内容"
+              maxLength={2000}
+              disabled={isGenerating}
+              required
+            />
+          </label>
+
+          <label className="block">
+            <span className="mb-2 block text-sm font-medium">参考图（可选）</span>
+            <input
+              className="block w-full cursor-pointer rounded-xl border border-dashed border-zinc-700 bg-zinc-950 px-3 py-3 text-sm text-zinc-300 file:mr-3 file:rounded-lg file:border-0 file:bg-zinc-800 file:px-3 file:py-2 file:text-sm file:text-zinc-100 hover:file:bg-zinc-700"
+              type="file"
+              accept="image/png,image/jpeg,image/webp"
+              onChange={(event) => void handleReferenceImageChange(event.target.files?.[0])}
+              disabled={isGenerating}
+            />
+            <span className="mt-2 block text-xs text-zinc-500">
+              {referenceImageName ? `已选择：${referenceImageName}` : "支持 PNG、JPEG、WebP，最大 8 MB"}
+            </span>
+          </label>
+
+          <button
+            className="w-full rounded-xl bg-white px-4 py-3 text-sm font-semibold text-zinc-950 transition hover:bg-zinc-200 disabled:cursor-not-allowed disabled:opacity-50"
+            type="submit"
+            disabled={!prompt.trim() || isGenerating}
+          >
+            {isGenerating ? "正在生成…" : "生成视频"}
+          </button>
+        </form>
+
+        <section className="mt-8 border-t border-zinc-800 pt-6" aria-live="polite">
+          <h2 className="text-sm font-medium">生成结果</h2>
+          {task.status === "idle" && <p className="mt-2 text-sm text-zinc-500">尚未提交任务。</p>}
+          {isGenerating && (
+            <p className="mt-2 text-sm text-zinc-300">
+              {task.status === "submitting" ? "正在提交任务…" : "视频正在生成，请耐心等待…"}
+            </p>
+          )}
+          {task.status === "failed" && <p className="mt-2 text-sm text-red-300">{task.error}</p>}
+          {task.status === "succeeded" && task.videoUrl && (
+            <div className="mt-4 space-y-3">
+              <video className="w-full rounded-xl bg-black" controls src={task.videoUrl}>
+                当前浏览器不支持视频播放。
+              </video>
+              <a
+                className="inline-flex rounded-lg border border-zinc-700 px-3 py-2 text-sm hover:bg-zinc-800"
+                href={task.videoUrl}
+                target="_blank"
+                rel="noreferrer"
+                download
+              >
+                下载视频
+              </a>
+            </div>
+          )}
+        </section>
+      </section>
+    </main>
+  );
+}
+
+function readFileAsDataUrl(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(reader.error);
+    reader.onload = () => resolve(String(reader.result));
+    reader.readAsDataURL(file);
+  });
+}

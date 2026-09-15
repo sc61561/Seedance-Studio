@@ -16,6 +16,8 @@ describe("VideoGenerator", () => {
     expect(markup).toContain('type="range"');
     expect(markup).toContain('min="5"');
     expect(markup).toContain('max="10"');
+    expect(markup).toContain('multiple=""');
+    expect(markup).toContain("最多 4 张");
     expect(markup).toMatch(/<button[^>]*disabled/);
   });
 });

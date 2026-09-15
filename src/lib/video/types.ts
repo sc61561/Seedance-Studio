@@ -15,6 +15,7 @@ export interface CreateVideoInput {
   resolution?: string;
   aspectRatio?: string;
   referenceImageUrl?: string;
+  referenceImageUrls?: string[];
 }
 
 export interface CreateVideoTaskResult {

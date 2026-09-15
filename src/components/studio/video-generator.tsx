@@ -35,8 +35,8 @@ export function VideoGenerator() {
   const [resolution, setResolution] = useState<(typeof resolutionOptions)[number]>("720p");
   const [aspectRatio, setAspectRatio] = useState<(typeof aspectRatioOptions)[number]>("16:9");
   const [duration, setDuration] = useState<(typeof durationOptions)[number]>(5);
-  const [referenceImageDataUrl, setReferenceImageDataUrl] = useState<string>();
-  const [referenceImageName, setReferenceImageName] = useState<string>();
+  const [referenceImageDataUrls, setReferenceImageDataUrls] = useState<string[]>([]);
+  const [referenceImageNames, setReferenceImageNames] = useState<string[]>([]);
   const [task, setTask] = useState<VideoTask>({ taskId: "", status: "idle" });
   const pollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pollAbortRef = useRef<AbortController | null>(null);
@@ -54,8 +54,8 @@ export function VideoGenerator() {
   };
 
   const clearReferenceImage = () => {
-    setReferenceImageDataUrl(undefined);
-    setReferenceImageName(undefined);
+    setReferenceImageDataUrls([]);
+    setReferenceImageNames([]);
     setModel(defaultSeedanceModel());
   };
 
@@ -72,32 +72,40 @@ export function VideoGenerator() {
 
   const isGenerating = task.status === "submitting" || task.status === "queued" || task.status === "processing";
 
-  async function handleReferenceImageChange(file: File | undefined) {
-    if (!file) {
+  async function handleReferenceImageChange(files: FileList | null) {
+    const selectedFiles = Array.from(files ?? []);
+
+    if (selectedFiles.length === 0) {
       clearReferenceImage();
       return;
     }
 
-    if (!acceptedImageTypes.has(file.type)) {
+    if (selectedFiles.length > 4) {
+      clearReferenceImage();
+      setTask({ taskId: "", status: "failed", error: "参考图最多可上传 4 张。" });
+      return;
+    }
+
+    if (selectedFiles.some((file) => !acceptedImageTypes.has(file.type))) {
       clearReferenceImage();
       setTask({ taskId: "", status: "failed", error: "参考图仅支持 PNG、JPEG 或 WebP 格式。" });
       return;
     }
 
-    if (file.size > maxImageBytes) {
+    if (selectedFiles.reduce((total, file) => total + file.size, 0) > maxImageBytes) {
       clearReferenceImage();
-      setTask({ taskId: "", status: "failed", error: "参考图不能超过 8 MB。" });
+      setTask({ taskId: "", status: "failed", error: "参考图总大小不能超过 8 MB。" });
       return;
     }
 
     try {
-      const dataUrl = await readFileAsDataUrl(file);
+      const dataUrls = await Promise.all(selectedFiles.map(readFileAsDataUrl));
       if (!isMountedRef.current) {
         return;
       }
 
-      setReferenceImageDataUrl(dataUrl);
-      setReferenceImageName(file.name);
+      setReferenceImageDataUrls(dataUrls);
+      setReferenceImageNames(selectedFiles.map((file) => file.name));
       setTask({ taskId: "", status: "idle" });
     } catch {
       if (!isMountedRef.current) {
@@ -130,7 +138,7 @@ export function VideoGenerator() {
           resolution,
           aspectRatio,
           duration,
-          referenceImageDataUrl,
+          referenceImageDataUrls,
         }),
         signal: controller.signal,
       });
@@ -235,7 +243,7 @@ export function VideoGenerator() {
           <p className="text-sm font-medium text-zinc-400">Seedance Studio</p>
           <h1 className="mt-2 text-2xl font-semibold tracking-tight">视频生成</h1>
           <p className="mt-2 text-sm leading-6 text-zinc-400">
-            输入提示词，可选上传一张参考图，然后等待视频生成完成。
+            输入提示词，可选上传参考图，然后等待视频生成完成。
           </p>
         </header>
 
@@ -268,7 +276,7 @@ export function VideoGenerator() {
               ))}
             </select>
             <span className="mt-2 block text-xs text-zinc-500">
-              四个模型均支持文生视频和单张参考图作为首帧的图生视频。
+              四个模型均支持文生视频和参考图驱动的基础图生视频。
             </span>
           </label>
 
@@ -325,16 +333,19 @@ export function VideoGenerator() {
           </div>
 
           <label className="block">
-            <span className="mb-2 block text-sm font-medium">参考图（可选）</span>
+            <span className="mb-2 block text-sm font-medium">参考图（可选，最多 4 张）</span>
             <input
               className="block w-full cursor-pointer rounded-xl border border-dashed border-zinc-700 bg-zinc-950 px-3 py-3 text-sm text-zinc-300 file:mr-3 file:rounded-lg file:border-0 file:bg-zinc-800 file:px-3 file:py-2 file:text-sm file:text-zinc-100 hover:file:bg-zinc-700"
               type="file"
               accept="image/png,image/jpeg,image/webp"
-              onChange={(event) => void handleReferenceImageChange(event.target.files?.[0])}
+              multiple
+              onChange={(event) => void handleReferenceImageChange(event.target.files)}
               disabled={isGenerating}
             />
             <span className="mt-2 block text-xs text-zinc-500">
-              {referenceImageName ? `已选择：${referenceImageName}` : "支持 PNG、JPEG、WebP，最大 8 MB"}
+              {referenceImageNames.length > 0
+                ? `已选择 ${referenceImageNames.length} 张：${referenceImageNames.join("、")}`
+                : "支持 PNG、JPEG、WebP，最多 4 张，总大小不超过 8 MB"}
             </span>
           </label>
 

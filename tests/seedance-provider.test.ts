@@ -102,6 +102,29 @@ describe("SeedanceProvider", () => {
     );
   });
 
+  it("将多张图片映射为首帧和参考图", async () => {
+    fetchMock.mockResolvedValueOnce(createResponse({ id: "cgt-multi-image" }));
+    const imageUrls = [
+      "data:image/png;base64,Zmlyc3Q=",
+      "data:image/png;base64,c2Vjb25k",
+    ];
+
+    await new SeedanceProvider().createTask({
+      provider: "seedance",
+      model: "doubao-seedance-2-5-260628",
+      prompt: "让两个角色在雨中相遇",
+      referenceImageUrls: imageUrls,
+    });
+
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toMatchObject({
+      content: [
+        { type: "text", text: "让两个角色在雨中相遇" },
+        { type: "image_url", image_url: { url: imageUrls[0] }, role: "first_frame" },
+        { type: "image_url", image_url: { url: imageUrls[1] }, role: "reference_image" },
+      ],
+    });
+  });
+
   it("将成功任务响应规范化为视频 URL", async () => {
     fetchMock.mockResolvedValueOnce(
       createResponse({

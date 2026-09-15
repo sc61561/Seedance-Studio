@@ -61,6 +61,20 @@ describe("POST /api/generate", () => {
     });
   });
 
+  it("拒绝超过四张的参考图", async () => {
+    const response = await POST(
+      requestFor({
+        prompt: "生成一段视频",
+        referenceImageDataUrls: Array.from({ length: 5 }, () => "data:image/png;base64,iVBORw0KGgo="),
+      }),
+    );
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toEqual({
+      error: "参考图最多可上传 4 张。",
+    });
+  });
+
   it("拒绝非官方的模型标识", async () => {
     const response = await POST(
       requestFor({

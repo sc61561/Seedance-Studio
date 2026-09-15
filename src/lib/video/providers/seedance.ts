@@ -33,13 +33,19 @@ export class SeedanceProvider implements VideoProvider {
       { type: "text", text: input.prompt },
     ];
 
-    if (input.referenceImageUrl) {
+    const referenceImageUrls = input.referenceImageUrls?.length
+      ? input.referenceImageUrls
+      : input.referenceImageUrl
+        ? [input.referenceImageUrl]
+        : [];
+
+    referenceImageUrls.forEach((url, index) => {
       content.push({
         type: "image_url",
-        image_url: { url: input.referenceImageUrl },
-        role: "first_frame",
+        image_url: { url },
+        role: index === 0 ? "first_frame" : "reference_image",
       });
-    }
+    });
 
     const response = await this.request("/contents/generations/tasks", {
       method: "POST",

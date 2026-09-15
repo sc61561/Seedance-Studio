@@ -14,6 +14,7 @@ export const runtime = "nodejs";
 
 const maxPromptLength = 2_000;
 const maxImageBytes = 8 * 1024 * 1024;
+const maxReferenceImages = 4;
 const imageDataUrlPattern = /^data:image\/(png|jpeg|webp);base64,([A-Za-z0-9+/]+={0,2})$/;
 
 export async function POST(request: Request): Promise<Response> {
@@ -32,12 +33,9 @@ export async function POST(request: Request): Promise<Response> {
     return errorResponse(`提示词不能超过 ${maxPromptLength} 个字符。`);
   }
 
-  const referenceImageDataUrl = payload.referenceImageDataUrl;
-  if (referenceImageDataUrl !== undefined) {
-    const imageError = validateReferenceImage(referenceImageDataUrl);
-    if (imageError) {
-      return errorResponse(imageError);
-    }
+  const referenceImages = resolveReferenceImages(payload);
+  if ("error" in referenceImages) {
+    return errorResponse(referenceImages.error);
   }
 
   const modelResolution = resolveModel(payload.model);
@@ -87,8 +85,7 @@ export async function POST(request: Request): Promise<Response> {
       resolution: resolution.value,
       aspectRatio: aspectRatio.value,
       duration: duration.value,
-      referenceImageUrl:
-        typeof referenceImageDataUrl === "string" ? referenceImageDataUrl : undefined,
+      referenceImageUrls: referenceImages.urls,
     });
 
     return Response.json(task);
@@ -136,6 +133,44 @@ function validateReferenceImage(value: unknown): string | null {
   return hasMatchingImageSignature(match[1], imageBytes)
     ? null
     : "参考图内容不是有效的 PNG、JPEG 或 WebP 图片。";
+}
+
+function resolveReferenceImages(
+  payload: Record<string, unknown>,
+): { urls: string[] } | { error: string } {
+  const value =
+    payload.referenceImageDataUrls ??
+    (payload.referenceImageDataUrl === undefined ? [] : [payload.referenceImageDataUrl]);
+
+  if (!Array.isArray(value) || value.some((item) => typeof item !== "string")) {
+    return { error: "参考图格式不正确。" };
+  }
+
+  if (value.length > maxReferenceImages) {
+    return { error: `参考图最多可上传 ${maxReferenceImages} 张。` };
+  }
+
+  let totalBytes = 0;
+  for (const image of value) {
+    const imageError = validateReferenceImage(image);
+    if (imageError) {
+      return { error: imageError };
+    }
+
+    totalBytes += dataUrlByteLength(image);
+  }
+
+  if (totalBytes > maxImageBytes) {
+    return { error: "参考图总大小不能超过 8 MB。" };
+  }
+
+  return { urls: value };
+}
+
+function dataUrlByteLength(value: string): number {
+  const base64 = imageDataUrlPattern.exec(value)?.[2] ?? "";
+  const padding = base64.endsWith("==") ? 2 : base64.endsWith("=") ? 1 : 0;
+  return (base64.length * 3) / 4 - padding;
 }
 
 function resolveModel(value: unknown): { model: string } | { error: string } {

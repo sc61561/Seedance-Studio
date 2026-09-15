@@ -26,43 +26,71 @@ export function VideoGenerator() {
   const [referenceImageName, setReferenceImageName] = useState<string>();
   const [task, setTask] = useState<VideoTask>({ taskId: "", status: "idle" });
   const pollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pollAbortRef = useRef<AbortController | null>(null);
+  const submitAbortRef = useRef<AbortController | null>(null);
+  const isMountedRef = useRef(true);
 
   const stopPolling = () => {
     if (pollTimerRef.current) {
       clearTimeout(pollTimerRef.current);
       pollTimerRef.current = null;
     }
+
+    pollAbortRef.current?.abort();
+    pollAbortRef.current = null;
+  };
+
+  const clearReferenceImage = () => {
+    setReferenceImageDataUrl(undefined);
+    setReferenceImageName(undefined);
   };
 
   useEffect(() => {
-    return () => stopPolling();
+    isMountedRef.current = true;
+
+    return () => {
+      isMountedRef.current = false;
+      stopPolling();
+      submitAbortRef.current?.abort();
+      submitAbortRef.current = null;
+    };
   }, []);
 
   const isGenerating = task.status === "submitting" || task.status === "queued" || task.status === "processing";
 
   async function handleReferenceImageChange(file: File | undefined) {
     if (!file) {
-      setReferenceImageDataUrl(undefined);
-      setReferenceImageName(undefined);
+      clearReferenceImage();
       return;
     }
 
     if (!acceptedImageTypes.has(file.type)) {
+      clearReferenceImage();
       setTask({ taskId: "", status: "failed", error: "参考图仅支持 PNG、JPEG 或 WebP 格式。" });
       return;
     }
 
     if (file.size > maxImageBytes) {
+      clearReferenceImage();
       setTask({ taskId: "", status: "failed", error: "参考图不能超过 8 MB。" });
       return;
     }
 
     try {
       const dataUrl = await readFileAsDataUrl(file);
+      if (!isMountedRef.current) {
+        return;
+      }
+
       setReferenceImageDataUrl(dataUrl);
       setReferenceImageName(file.name);
       setTask({ taskId: "", status: "idle" });
     } catch {
+      if (!isMountedRef.current) {
+        return;
+      }
+
+      clearReferenceImage();
       setTask({ taskId: "", status: "failed", error: "读取参考图失败，请重新选择。" });
     }
   }
@@ -75,6 +103,8 @@ export function VideoGenerator() {
 
     stopPolling();
     setTask({ taskId: "", status: "submitting" });
+    const controller = new AbortController();
+    submitAbortRef.current = controller;
 
     try {
       const response = await fetch("/api/generate", {
@@ -84,8 +114,13 @@ export function VideoGenerator() {
           prompt: prompt.trim(),
           referenceImageDataUrl,
         }),
+        signal: controller.signal,
       });
       const payload = (await response.json()) as { taskId?: string; error?: string };
+
+      if (!isMountedRef.current || controller.signal.aborted) {
+        return;
+      }
 
       if (!response.ok || !payload.taskId) {
         throw new Error(payload.error ?? "视频任务创建失败，请稍后重试。");
@@ -95,20 +130,40 @@ export function VideoGenerator() {
       setTask(nextTask);
       await pollTask(nextTask.taskId);
     } catch (error) {
+      if (!isMountedRef.current || controller.signal.aborted) {
+        return;
+      }
+
       setTask({
         taskId: "",
         status: "failed",
         error: error instanceof Error ? error.message : "视频任务创建失败，请稍后重试。",
       });
+    } finally {
+      if (submitAbortRef.current === controller) {
+        submitAbortRef.current = null;
+      }
     }
   }
 
   async function pollTask(taskId: string) {
+    if (!isMountedRef.current) {
+      return;
+    }
+
+    const controller = new AbortController();
+    pollAbortRef.current = controller;
+
     try {
       const response = await fetch(`/api/task/${encodeURIComponent(taskId)}`, {
         cache: "no-store",
+        signal: controller.signal,
       });
       const payload = (await response.json()) as VideoTask;
+
+      if (!isMountedRef.current || controller.signal.aborted) {
+        return;
+      }
 
       if (!response.ok) {
         throw new Error(payload.error ?? "视频任务查询失败，请稍后重试。");
@@ -120,14 +175,26 @@ export function VideoGenerator() {
         return;
       }
 
-      pollTimerRef.current = setTimeout(() => void pollTask(taskId), 5_000);
+      pollTimerRef.current = setTimeout(() => {
+        if (isMountedRef.current) {
+          void pollTask(taskId);
+        }
+      }, 5_000);
     } catch (error) {
+      if (!isMountedRef.current || controller.signal.aborted) {
+        return;
+      }
+
       setTask({
         taskId,
         status: "failed",
         error: error instanceof Error ? error.message : "视频任务查询失败，请稍后重试。",
       });
       stopPolling();
+    } finally {
+      if (pollAbortRef.current === controller) {
+        pollAbortRef.current = null;
+      }
     }
   }
 

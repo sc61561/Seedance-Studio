@@ -1,4 +1,8 @@
+import { Buffer } from "node:buffer";
+
 import { SeedanceProvider, VideoProviderError } from "@/lib/video/providers/seedance";
+
+export const runtime = "nodejs";
 
 const maxPromptLength = 2_000;
 const maxImageBytes = 8 * 1024 * 1024;
@@ -67,10 +71,36 @@ function validateReferenceImage(value: unknown): string | null {
   }
 
   const base64 = match[2];
+  if (base64.length % 4 !== 0) {
+    return "参考图格式不正确。";
+  }
+
   const padding = base64.endsWith("==") ? 2 : base64.endsWith("=") ? 1 : 0;
   const byteLength = (base64.length * 3) / 4 - padding;
 
-  return byteLength > maxImageBytes ? "参考图不能超过 8 MB。" : null;
+  if (byteLength > maxImageBytes) {
+    return "参考图不能超过 8 MB。";
+  }
+
+  const imageBytes = Buffer.from(base64, "base64");
+  return hasMatchingImageSignature(match[1], imageBytes)
+    ? null
+    : "参考图内容不是有效的 PNG、JPEG 或 WebP 图片。";
+}
+
+function hasMatchingImageSignature(mimeType: string, bytes: Buffer): boolean {
+  if (mimeType === "png") {
+    return bytes.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]));
+  }
+
+  if (mimeType === "jpeg") {
+    return bytes.subarray(0, 3).equals(Buffer.from([0xff, 0xd8, 0xff]));
+  }
+
+  return (
+    bytes.subarray(0, 4).equals(Buffer.from("RIFF")) &&
+    bytes.subarray(8, 12).equals(Buffer.from("WEBP"))
+  );
 }
 
 function errorResponse(error: string, status = 400): Response {

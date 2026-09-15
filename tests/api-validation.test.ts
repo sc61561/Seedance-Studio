@@ -31,6 +31,20 @@ describe("POST /api/generate", () => {
     });
   });
 
+  it("拒绝伪装成图片的内容", async () => {
+    const response = await POST(
+      requestFor({
+        prompt: "生成一段视频",
+        referenceImageDataUrl: "data:image/png;base64,aGVsbG8=",
+      }),
+    );
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toEqual({
+      error: "参考图内容不是有效的 PNG、JPEG 或 WebP 图片。",
+    });
+  });
+
   it("拒绝超过 8 MB 的参考图", async () => {
     const response = await POST(
       requestFor({

@@ -69,11 +69,19 @@ export class SeedanceProvider implements VideoProvider {
     );
     const task = (await response.json()) as ArkTaskResponse;
     const status = normalizeStatus(task.status);
+    const videoUrl = task.content?.video_url;
+
+    if (
+      status === "succeeded" &&
+      (typeof videoUrl !== "string" || !videoUrl.trim())
+    ) {
+      throw new VideoProviderError("视频服务未返回可播放的视频地址。");
+    }
 
     return {
       taskId: task.id ?? taskId,
       status,
-      videoUrl: status === "succeeded" ? task.content?.video_url : undefined,
+      videoUrl: status === "succeeded" ? videoUrl : undefined,
       error: status === "failed" ? "视频生成失败，请调整提示词后重试。" : undefined,
     };
   }

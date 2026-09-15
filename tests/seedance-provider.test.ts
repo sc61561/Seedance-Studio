@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { SeedanceProvider } from "@/lib/video/providers/seedance";
+import { SeedanceProvider, VideoProviderError } from "@/lib/video/providers/seedance";
 
 const createResponse = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), {
@@ -93,5 +93,33 @@ describe("SeedanceProvider", () => {
       status: "succeeded",
       videoUrl: "https://example.com/video.mp4",
     });
+  });
+
+  it("拒绝成功状态却缺少视频地址的任务响应", async () => {
+    fetchMock.mockResolvedValueOnce(
+      createResponse({
+        id: "cgt-incomplete",
+        status: "succeeded",
+        content: {},
+      }),
+    );
+
+    await expect(new SeedanceProvider().getTask("cgt-incomplete")).rejects.toEqual(
+      new VideoProviderError("视频服务未返回可播放的视频地址。"),
+    );
+  });
+
+  it("拒绝成功状态却返回空视频地址的任务响应", async () => {
+    fetchMock.mockResolvedValueOnce(
+      createResponse({
+        id: "cgt-empty-url",
+        status: "succeeded",
+        content: { video_url: "   " },
+      }),
+    );
+
+    await expect(new SeedanceProvider().getTask("cgt-empty-url")).rejects.toEqual(
+      new VideoProviderError("视频服务未返回可播放的视频地址。"),
+    );
   });
 });

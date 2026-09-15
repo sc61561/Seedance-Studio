@@ -15,8 +15,9 @@ describe("VideoGenerator", () => {
     expect(markup).toContain("画面比例");
     expect(markup).toContain("视频时长");
     expect(markup).toContain('type="range"');
-    expect(markup).toContain('min="5"');
-    expect(markup).toContain('max="10"');
+    expect(markup).toContain('min="2"');
+    expect(markup).toContain('max="30"');
+    expect(markup).toContain('step="1"');
     expect(markup).toContain('multiple=""');
     expect(markup).toContain("最多 4 张");
     expect(markup).toMatch(/<button[^>]*disabled/);

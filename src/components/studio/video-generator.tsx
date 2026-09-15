@@ -4,8 +4,10 @@ import { FormEvent, useEffect, useRef, useState } from "react";
 
 import {
   aspectRatioOptions,
+  defaultDuration,
   defaultSeedanceModel,
-  durationOptions,
+  maxDuration,
+  minDuration,
   resolutionOptions,
 } from "@/lib/video/models";
 
@@ -32,7 +34,7 @@ export function VideoGenerator() {
   const [model, setModel] = useState(defaultSeedanceModel());
   const [resolution, setResolution] = useState<(typeof resolutionOptions)[number]>("720p");
   const [aspectRatio, setAspectRatio] = useState<(typeof aspectRatioOptions)[number]>("16:9");
-  const [duration, setDuration] = useState<(typeof durationOptions)[number]>(5);
+  const [duration, setDuration] = useState(defaultDuration);
   const [referenceImageDataUrls, setReferenceImageDataUrls] = useState<string[]>([]);
   const [referenceImageNames, setReferenceImageNames] = useState<string[]>([]);
   const [task, setTask] = useState<VideoTask>({ taskId: "", status: "idle" });
@@ -290,17 +292,17 @@ export function VideoGenerator() {
               <input
                 className="w-full accent-white disabled:cursor-not-allowed disabled:opacity-50"
                 type="range"
-                min={5}
-                max={10}
-                step={5}
+                min={minDuration}
+                max={maxDuration}
+                step={1}
                 value={duration}
-                onChange={(event) => setDuration(Number(event.target.value) as typeof duration)}
+                onChange={(event) => setDuration(Number(event.target.value))}
                 disabled={isGenerating}
                 aria-label="视频时长"
               />
               <span className="mt-1 flex justify-between text-xs text-zinc-500">
-                <span>{durationOptions[0]} 秒</span>
-                <span>{durationOptions[durationOptions.length - 1]} 秒</span>
+                <span>{minDuration} 秒</span>
+                <span>{maxDuration} 秒</span>
               </span>
             </label>
           </div>

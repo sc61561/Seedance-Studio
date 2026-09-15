@@ -133,6 +133,30 @@ describe("POST /api/generate", () => {
     });
   });
 
+  it("允许在 2 到 30 秒之间选择任意整数时长", async () => {
+    const response = await POST(
+      requestFor({
+        prompt: "生成一段视频",
+        model: "ep-20260829185420-qnfvz",
+        duration: 11,
+      }),
+    );
+
+    expect(response.status).toBe(503);
+    await expect(response.json()).resolves.toEqual({
+      error: "服务器尚未配置 Seedance API Key。",
+    });
+  });
+
+  it.each([1, 31, 2.5])("拒绝范围外或非整数的视频时长 %s", async (duration) => {
+    const response = await POST(requestFor({ prompt: "生成一段视频", duration }));
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toEqual({
+      error: "视频时长需为 2 到 30 秒之间的整数。",
+    });
+  });
+
   it("拒绝不支持的分辨率", async () => {
     const response = await POST(
       requestFor({

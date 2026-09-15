@@ -1,10 +1,12 @@
 export const resolutionOptions = ["480p", "720p", "1080p"] as const;
 export const aspectRatioOptions = ["16:9", "9:16", "1:1", "4:3", "3:4"] as const;
-export const durationOptions = [5, 10] as const;
+export const minDuration = 2;
+export const maxDuration = 30;
+export const defaultDuration = 5;
 
 export type Resolution = (typeof resolutionOptions)[number];
 export type AspectRatio = (typeof aspectRatioOptions)[number];
-export type Duration = (typeof durationOptions)[number];
+export type Duration = number;
 
 export const seedanceEndpointId = "ep-20260829185420-qnfvz";
 

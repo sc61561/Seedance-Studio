@@ -2,9 +2,11 @@ import { Buffer } from "node:buffer";
 
 import {
   aspectRatioOptions,
+  defaultDuration,
   defaultSeedanceModel,
-  durationOptions,
   getSeedanceModel,
+  maxDuration,
+  minDuration,
   modelSupportsResolution,
   resolutionOptions,
 } from "@/lib/video/models";
@@ -67,12 +69,7 @@ export async function POST(request: Request): Promise<Response> {
     return errorResponse(aspectRatio.error);
   }
 
-  const duration = resolveOption(
-    payload.duration,
-    durationOptions,
-    5,
-    "请选择支持的视频时长。",
-  );
+  const duration = resolveDuration(payload.duration);
   if ("error" in duration) {
     return errorResponse(duration.error);
   }
@@ -186,6 +183,21 @@ function resolveModel(value: unknown): { model: string } | { error: string } {
   }
 
   return { model: model.id };
+}
+
+function resolveDuration(value: unknown): { value: number } | { error: string } {
+  const duration = value === undefined ? defaultDuration : value;
+
+  if (
+    typeof duration !== "number" ||
+    !Number.isInteger(duration) ||
+    duration < minDuration ||
+    duration > maxDuration
+  ) {
+    return { error: `视频时长需为 ${minDuration} 到 ${maxDuration} 秒之间的整数。` };
+  }
+
+  return { value: duration };
 }
 
 function resolveOption<T extends string | number>(

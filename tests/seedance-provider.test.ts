@@ -125,6 +125,25 @@ describe("SeedanceProvider", () => {
     });
   });
 
+  it("展示方舟参数错误的状态码与安全错误详情", async () => {
+    fetchMock.mockResolvedValueOnce(createResponse({
+      error: {
+        code: "InvalidParameter",
+        message: "The prompt is too long.",
+      },
+    }, 400));
+
+    await expect(
+      new SeedanceProvider().createTask({
+        provider: "seedance",
+        model: "",
+        prompt: "测试",
+      }),
+    ).rejects.toEqual(
+      new VideoProviderError("视频服务请求失败（HTTP 400，InvalidParameter）：The prompt is too long.", 400),
+    );
+  });
+
   it("将成功任务响应规范化为视频 URL", async () => {
     fetchMock.mockResolvedValueOnce(
       createResponse({

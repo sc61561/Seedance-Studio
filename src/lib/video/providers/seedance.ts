@@ -17,6 +17,13 @@ type ArkTaskResponse = {
   content?: { video_url?: string };
 };
 
+type ArkErrorResponse = {
+  error?: {
+    code?: string;
+    message?: string;
+  };
+};
+
 export class VideoProviderError extends Error {
   constructor(
     message: string,
@@ -110,7 +117,11 @@ export class SeedanceProvider implements VideoProvider {
       });
 
       if (!response.ok) {
-        throw new VideoProviderError(messageForStatus(response.status), response.status);
+        const errorPayload = await response.json().catch(() => null) as ArkErrorResponse | null;
+        throw new VideoProviderError(
+          messageForStatus(response.status, errorPayload),
+          response.status,
+        );
       }
 
       return response;
@@ -141,7 +152,7 @@ function normalizeStatus(status: string | undefined): VideoTaskState {
   }
 }
 
-function messageForStatus(statusCode: number): string {
+function messageForStatus(statusCode: number, payload?: ArkErrorResponse | null): string {
   if (statusCode === 401 || statusCode === 403) {
     return "视频服务认证失败，请检查服务器 API Key 配置。";
   }
@@ -150,5 +161,20 @@ function messageForStatus(statusCode: number): string {
     return "视频服务繁忙，请稍后再试。";
   }
 
-  return "视频服务暂时不可用，请稍后重试。";
+  const code = payload?.error?.code?.trim();
+  const detail = sanitizeErrorDetail(payload?.error?.message);
+  const label = code ? `HTTP ${statusCode}，${code}` : `HTTP ${statusCode}`;
+  return detail
+    ? `视频服务请求失败（${label}）：${detail}`
+    : `视频服务请求失败（${label}）。`;
+}
+
+function sanitizeErrorDetail(value: string | undefined): string | undefined {
+  const detail = value
+    ?.replace(/Bearer\s+\S+/gi, "Bearer [已隐藏]")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  if (!detail) return undefined;
+  return detail.slice(0, 240);
 }

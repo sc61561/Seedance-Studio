@@ -13,7 +13,7 @@
 
 ## 当前实现
 
-- 固定使用已配置的火山方舟 Seedance 推理接入点；页面只需配置 `SEEDANCE_API_KEY`。
+- 固定使用已配置的火山方舟 Seedance 推理接入点；本地开发只需配置 `SEEDANCE_API_KEY`，生产部署还必须同时配置 `APP_ACCESS_PASSWORD` 与 `SESSION_SECRET`，否则受保护路由会安全拒绝请求。
 - 提示词上限为 4000 字符，支持普通参考、连续关键帧和首尾帧三种生成模式。
 - 支持 480p/720p/1080p、常用画面比例和 2–30 秒时长（每次 1 秒）。
 - 支持最多 10 张 PNG、JPEG 或 WebP 参考图，可拖拽调整顺序；单张及总大小不超过 3 MB，以满足 Vercel Function 4.5 MB 请求限制。
@@ -81,7 +81,7 @@ npm run dev
 2. 在 Vercel 项目设置中添加 `SEEDANCE_API_KEY`。
 3. 同时添加 `APP_ACCESS_PASSWORD` 与随机长字符串 `SESSION_SECRET`；两者在生产环境都是必需项，缺少任一项时受保护路由会返回配置错误。
 4. 如需 URL-first 参考图上传，连接 Vercel Blob 并添加 `BLOB_READ_WRITE_TOKEN`。
-5. 部署后打开分配域名，确认登录（如已启用）、上传、生成和 PWA 安装入口。
+5. 部署后打开分配域名，确认登录、上传、生成和 PWA 安装入口。
 
 生产环境不要依赖本地 `.env.local`，也不要把 API Key 放入客户端代码。
 

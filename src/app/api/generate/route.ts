@@ -136,6 +136,23 @@ function validateReferenceImage(value: unknown): string | null {
 function resolveReferenceImages(
   payload: Record<string, unknown>,
 ): { urls: string[] } | { error: ApiErrorBody } {
+  const uploadedUrls = payload.referenceImageUrls;
+  if (uploadedUrls !== undefined) {
+    if (!Array.isArray(uploadedUrls) || uploadedUrls.some((item) => typeof item !== "string")) {
+      return { error: apiError("api.refInvalidUrl") };
+    }
+
+    if (uploadedUrls.length > maxReferenceImages) {
+      return { error: apiError("api.refTooMany", { n: maxReferenceImages }) };
+    }
+
+    if (uploadedUrls.some((url) => !isHttpsUrl(url))) {
+      return { error: apiError("api.refInvalidUrl") };
+    }
+
+    return { urls: uploadedUrls };
+  }
+
   const value =
     payload.referenceImageDataUrls ??
     (payload.referenceImageDataUrl === undefined ? [] : [payload.referenceImageDataUrl]);
@@ -163,6 +180,14 @@ function resolveReferenceImages(
   }
 
   return { urls: value };
+}
+
+function isHttpsUrl(value: string): boolean {
+  try {
+    return new URL(value).protocol === "https:";
+  } catch {
+    return false;
+  }
 }
 
 function dataUrlByteLength(value: string): number {

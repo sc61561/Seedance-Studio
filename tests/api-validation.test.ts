@@ -80,6 +80,49 @@ describe("POST /api/generate", () => {
     });
   });
 
+  it("接受 HTTPS 上传后的参考图 URL", async () => {
+    const response = await POST(
+      requestFor({
+        prompt: "生成一段视频",
+        referenceImageUrls: ["https://blob.example.com/reference-images/safe-key.png"],
+      }),
+    );
+
+    expect(response.status).toBe(503);
+    await expect(response.json()).resolves.toEqual({ code: "api.providerNoKey" });
+  });
+
+  it.each([
+    "http://blob.example.com/image.png",
+    "file:///tmp/image.png",
+    "javascript:alert(1)",
+    "data:image/png;base64,iVBORw0KGgo=",
+    "ftp://blob.example.com/image.png",
+    "not a url",
+  ])("拒绝不安全或无效的参考图 URL：%s", async (referenceImageUrl) => {
+    const response = await POST(
+      requestFor({ prompt: "生成一段视频", referenceImageUrls: [referenceImageUrl] }),
+    );
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toEqual({ code: "api.refInvalidUrl" });
+  });
+
+  it("拒绝超过十张的参考图 URL", async () => {
+    const response = await POST(
+      requestFor({
+        prompt: "生成一段视频",
+        referenceImageUrls: Array.from({ length: 11 }, (_, index) => `https://blob.example.com/${index}.png`),
+      }),
+    );
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toEqual({
+      code: "api.refTooMany",
+      params: { n: 10 },
+    });
+  });
+
   it("拒绝非官方的模型标识", async () => {
     const response = await POST(
       requestFor({

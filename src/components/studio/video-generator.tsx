@@ -31,7 +31,11 @@ import {
   type GenerationMode,
   type MotionLevel,
 } from "@/lib/video/prompt-compiler";
-import { reorderReferenceImages, type ReferenceImage } from "@/lib/video/reference-images";
+import {
+  buildReferenceImagePayload,
+  reorderReferenceImages,
+  type ReferenceImage,
+} from "@/lib/video/reference-images";
 import {
   aspectRatioOptions,
   defaultDuration,
@@ -78,6 +82,11 @@ export function VideoGenerator() {
   const pollAbortRef = useRef<AbortController | null>(null);
   const submitAbortRef = useRef<AbortController | null>(null);
   const isMountedRef = useRef(true);
+  const referenceImagesRef = useRef<ReferenceImage[]>([]);
+
+  useEffect(() => {
+    referenceImagesRef.current = referenceImages;
+  }, [referenceImages]);
 
   const stopPolling = () => {
     if (pollTimerRef.current) {
@@ -95,6 +104,7 @@ export function VideoGenerator() {
       stopPolling();
       submitAbortRef.current?.abort();
       submitAbortRef.current = null;
+      referenceImagesRef.current.forEach((image) => URL.revokeObjectURL(image.previewUrl));
     };
   }, []);
 
@@ -125,14 +135,11 @@ export function VideoGenerator() {
       return;
     }
     try {
-      const nextImages = await Promise.all(
-        selectedFiles.map(async (file, index) => ({
-          id: createReferenceImageId(index),
-          name: file.name,
-          dataUrl: await readFileAsDataUrl(file),
-        })),
-      );
-      if (!isMountedRef.current) return;
+      const nextImages = await Promise.all(selectedFiles.map((file, index) => createReferenceImage(file, index)));
+      if (!isMountedRef.current) {
+        nextImages.forEach((image) => URL.revokeObjectURL(image.previewUrl));
+        return;
+      }
       setReferenceImages((images) => [...images, ...nextImages]);
       setTask({ taskId: "", status: "idle" });
     } catch {
@@ -143,7 +150,11 @@ export function VideoGenerator() {
   }
 
   function removeReferenceImage(id: string) {
-    setReferenceImages((images) => images.filter((image) => image.id !== id));
+    setReferenceImages((images) => {
+      const image = images.find((item) => item.id === id);
+      if (image) URL.revokeObjectURL(image.previewUrl);
+      return images.filter((image) => image.id !== id);
+    });
     setTask({ taskId: "", status: "idle" });
   }
 
@@ -194,7 +205,7 @@ export function VideoGenerator() {
           resolution,
           aspectRatio,
           duration,
-          referenceImageDataUrls: imagesForGeneration.map((image) => image.dataUrl),
+          ...buildReferenceImagePayload(imagesForGeneration),
         }),
       });
       const payload = (await response.json()) as { taskId?: string } & ApiErrorBody;
@@ -413,9 +424,8 @@ export function VideoGenerator() {
                         onDragEnd={() => setDraggedImageId(undefined)}
                         className="studio-reference-card group relative cursor-grab overflow-hidden active:cursor-grabbing"
                       >
-                        {/* Data URLs are intentionally kept local so the preview never leaves the browser. */}
                         {/* eslint-disable-next-line @next/next/no-img-element */}
-                        <img className="aspect-[4/3] w-full object-cover" src={image.dataUrl} alt={t("ref.alt", { n: index + 1 })} />
+                        <img className="aspect-[4/3] w-full object-cover" src={image.previewUrl} alt={t("ref.alt", { n: index + 1 })} />
                         <div className="flex items-center justify-between gap-2 border-t border-[var(--line)] px-2.5 py-2">
                           <span className="flex min-w-0 items-center gap-1.5 text-[11px] text-[var(--text-2)]"><GripVertical className="size-3 shrink-0 text-[var(--text-3)]" /> {String(index + 1).padStart(2, "0")}</span>
                           <span className="min-w-0 truncate text-[11px] text-[var(--text-3)]" title={image.name}>{image.name}</span>
@@ -543,4 +553,29 @@ function dataUrlByteLength(value: string): number {
 
 function createReferenceImageId(index: number): string {
   return `${Date.now()}-${index}-${Math.random().toString(36).slice(2)}`;
+}
+
+async function createReferenceImage(file: File, index: number): Promise<ReferenceImage> {
+  const dataUrl = await readFileAsDataUrl(file);
+  const image: ReferenceImage = {
+    id: createReferenceImageId(index),
+    name: file.name,
+    dataUrl,
+    previewUrl: URL.createObjectURL(file),
+    uploadStatus: "uploading",
+  };
+
+  try {
+    const formData = new FormData();
+    formData.set("file", file);
+    const response = await fetch("/api/upload", { method: "POST", body: formData });
+    const payload = await response.json() as { url?: string } & ApiErrorBody;
+    if (response.ok && payload.url) {
+      return { ...image, remoteUrl: payload.url, uploadStatus: "uploaded" };
+    }
+  } catch {
+    // The data URL remains the local development fallback when upload cannot run.
+  }
+
+  return { ...image, uploadStatus: "local" };
 }

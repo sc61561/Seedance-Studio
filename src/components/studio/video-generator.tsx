@@ -11,6 +11,7 @@ import {
   CircleAlert,
   Clapperboard,
   Download,
+  ExternalLink,
   Film,
   GripVertical,
   ImagePlus,
@@ -19,6 +20,7 @@ import {
   LogOut,
   Move,
   Play,
+  Share2,
   SlidersHorizontal,
   Sparkles,
   Trash2,
@@ -64,6 +66,7 @@ import {
 import { useI18n } from "@/lib/i18n/context";
 import type { AuthGateState } from "@/lib/auth/types";
 import { LanguageSwitcher } from "@/components/studio/language-switcher";
+import { InstallPrompt } from "@/components/pwa/install-prompt";
 
 type VideoTaskState = "idle" | "submitting" | "queued" | "processing" | "succeeded" | "failed";
 type VideoTask = { taskId: string; status: VideoTaskState; videoUrl?: string; error?: string };
@@ -538,6 +541,7 @@ export function VideoGenerator({
               <span className="studio-status-dot" aria-hidden="true" />
               <span>{t("topbar.status")}</span>
             </div>
+            <InstallPrompt />
             <LanguageSwitcher />
             {authState === "authenticated" && (
               <button
@@ -795,6 +799,22 @@ export function TaskRecoveryNotice({ restored }: { restored: boolean }) {
 
 export function VideoSuccessResult({ videoUrl }: { videoUrl: string }) {
   const { t } = useI18n();
+  const [shareStatus, setShareStatus] = useState<ShareVideoOutcome>();
+  const canShare = useSyncExternalStore(
+    subscribeToShareCapability,
+    getShareCapabilitySnapshot,
+    () => false,
+  );
+
+  async function handleShare() {
+    const outcome = await shareVideoResult({
+      videoUrl,
+      title: t("result.shareTitle"),
+      text: t("result.shareText"),
+      share: typeof navigator === "undefined" ? undefined : navigator.share?.bind(navigator),
+    });
+    setShareStatus(outcome);
+  }
 
   return (
     <div className="space-y-4">
@@ -803,12 +823,74 @@ export function VideoSuccessResult({ videoUrl }: { videoUrl: string }) {
           {t("result.videoUnsupported")}
         </video>
       </div>
-      <div className="flex items-center justify-between gap-3">
+      <div className="flex flex-wrap items-center justify-between gap-3">
         <p className="flex items-center gap-2 text-xs text-[var(--text-2)]"><Check className="size-3.5" /> {t("result.ready")}</p>
-        <a className="studio-download-button" href={videoUrl} target="_blank" rel="noreferrer" download><Download className="size-3.5" /> {t("result.download")}</a>
+        <div className="flex flex-wrap items-center justify-end gap-2">
+          {canShare && (
+            <button
+              className="studio-download-button"
+              type="button"
+              onClick={() => void handleShare()}
+              aria-label={t("result.share")}
+            >
+              <Share2 className="size-3.5" aria-hidden="true" /> {t("result.share")}
+            </button>
+          )}
+          <a className="studio-download-button" href={videoUrl} target="_blank" rel="noreferrer"><ExternalLink className="size-3.5" aria-hidden="true" /> {t("result.open")}</a>
+          <a className="studio-download-button" href={videoUrl} target="_blank" rel="noreferrer" download><Download className="size-3.5" aria-hidden="true" /> {t("result.download")}</a>
+        </div>
       </div>
+      {shareStatus && (
+        <p className="text-xs text-[var(--text-3)]" role="status" aria-live="polite">
+          {t(`result.shareStatus.${shareStatus}`)}
+        </p>
+      )}
     </div>
   );
+}
+
+export type ShareVideoOutcome = "shared" | "dismissed" | "unavailable" | "failed";
+
+type ShareVideoInput = {
+  videoUrl: string;
+  title: string;
+  text: string;
+  share?: (data: ShareData) => Promise<void>;
+};
+
+export async function shareVideoResult({
+  videoUrl,
+  title,
+  text,
+  share,
+}: ShareVideoInput): Promise<ShareVideoOutcome> {
+  if (!share) return "unavailable";
+
+  try {
+    await share({ title, text, url: videoUrl });
+    return "shared";
+  } catch (error) {
+    return isNamedAbortError(error) ? "dismissed" : "failed";
+  }
+}
+
+function isNamedAbortError(error: unknown): boolean {
+  return typeof error === "object"
+    && error !== null
+    && "name" in error
+    && error.name === "AbortError";
+}
+
+export function canShareVideo(capability: { share?: unknown } | undefined): boolean {
+  return typeof capability?.share === "function";
+}
+
+function subscribeToShareCapability(): () => void {
+  return () => undefined;
+}
+
+function getShareCapabilitySnapshot(): boolean {
+  return canShareVideo(typeof navigator === "undefined" ? undefined : navigator);
 }
 
 type ReferenceImageControlsProps = {

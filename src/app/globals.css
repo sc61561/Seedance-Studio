@@ -204,6 +204,70 @@
     border-color: var(--line-strong);
   }
 
+  .studio-install-wrap {
+    position: relative;
+  }
+
+  .studio-install-button {
+    display: inline-flex;
+    min-width: 2.5rem;
+    min-height: 2.5rem;
+    align-items: center;
+    justify-content: center;
+    gap: 0.4rem;
+    border: 1px solid var(--line);
+    padding: 0.4rem 0.6rem;
+    color: var(--text-2);
+    font-size: 0.75rem;
+    font-weight: 500;
+  }
+
+  .studio-install-button:hover,
+  .studio-install-button:focus-visible {
+    border-color: var(--line-strong);
+  }
+
+  .studio-install-guide {
+    position: absolute;
+    z-index: 50;
+    top: calc(100% + 0.55rem);
+    right: 0;
+    display: flex;
+    width: min(19rem, calc(100vw - 2rem));
+    align-items: flex-start;
+    gap: 0.75rem;
+    border: 1px solid var(--line-strong);
+    background: var(--paper);
+    padding: 0.8rem;
+    color: var(--text-2);
+    font-size: 0.75rem;
+    line-height: 1.5;
+  }
+
+  .studio-install-guide-close {
+    display: inline-flex;
+    min-width: 2rem;
+    min-height: 2rem;
+    align-items: center;
+    justify-content: center;
+    color: var(--text);
+  }
+
+  .studio-install-status {
+    position: absolute;
+    z-index: 50;
+    top: calc(100% + 0.55rem);
+    right: 0;
+    width: max-content;
+    max-width: min(19rem, calc(100vw - 2rem));
+    border: 1px solid var(--line-strong);
+    background: var(--paper);
+    padding: 0.65rem 0.75rem;
+    color: var(--text-2);
+    font-size: 0.75rem;
+    line-height: 1.4;
+  }
+
   .studio-lang-select {
     appearance: none;
     background: transparent;

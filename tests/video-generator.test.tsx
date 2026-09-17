@@ -2,10 +2,15 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 
 import { VideoGenerator } from "@/components/studio/video-generator";
+import { I18nProvider } from "@/lib/i18n/context";
 
 describe("VideoGenerator", () => {
-  it("初始状态要求填写提示词才能生成", () => {
-    const markup = renderToStaticMarkup(<VideoGenerator />);
+  it("初始状态要求填写提示词才能生成（默认中文）", () => {
+    const markup = renderToStaticMarkup(
+      <I18nProvider>
+        <VideoGenerator />
+      </I18nProvider>,
+    );
 
     expect(markup).toContain("请输入你想生成的视频内容");
     expect(markup).toContain('maxLength="4000"');
@@ -27,6 +32,19 @@ describe("VideoGenerator", () => {
     expect(markup).toContain("镜头");
     expect(markup).toContain("运动幅度");
     expect(markup).toContain("一致性");
+    expect(markup).toContain("AI VIDEO GENERATOR");
+    expect(markup).toContain("结果预览区");
     expect(markup).toMatch(/<button[^>]*disabled/);
+  });
+
+  it("提供中英双语切换入口", () => {
+    const markup = renderToStaticMarkup(
+      <I18nProvider>
+        <VideoGenerator />
+      </I18nProvider>,
+    );
+
+    expect(markup).toContain("English");
+    expect(markup).toContain("简体中文");
   });
 });

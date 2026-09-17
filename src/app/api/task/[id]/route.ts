@@ -1,3 +1,4 @@
+import { apiError } from "@/lib/video/errors";
 import { SeedanceProvider, VideoProviderError } from "@/lib/video/providers/seedance";
 
 type TaskRouteContext = {
@@ -12,7 +13,7 @@ export async function GET(
   const { id } = await context.params;
 
   if (!id) {
-    return Response.json({ error: "任务编号不正确。" }, { status: 400 });
+    return Response.json(apiError("api.taskIdInvalid"), { status: 400 });
   }
 
   try {
@@ -21,14 +22,11 @@ export async function GET(
   } catch (error) {
     if (error instanceof VideoProviderError) {
       return Response.json(
-        { error: error.message },
+        apiError(error.code, error.params, error.detail),
         { status: error.statusCode },
       );
     }
 
-    return Response.json(
-      { error: "视频任务查询失败，请稍后重试。" },
-      { status: 502 },
-    );
+    return Response.json(apiError("api.queryFailed"), { status: 502 });
   }
 }

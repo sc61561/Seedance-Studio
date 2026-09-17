@@ -1,6 +1,7 @@
 import "server-only";
 
 import { defaultSeedanceModel } from "@/lib/video/models";
+import type { ApiErrorParams } from "@/lib/video/errors";
 import type { VideoProvider } from "@/lib/video/provider";
 import type {
   CreateVideoInput,
@@ -24,12 +25,17 @@ type ArkErrorResponse = {
   };
 };
 
+// Carries a stable error `code` (localized on the client) plus optional params and
+// a language-neutral detail label. `message` stays human-readable for server logs.
 export class VideoProviderError extends Error {
   constructor(
-    message: string,
+    public readonly code: string,
     public readonly statusCode: number = 502,
+    public readonly params?: ApiErrorParams,
+    public readonly detail?: string,
   ) {
-    super(message);
+    super(code);
+    this.name = "VideoProviderError";
   }
 }
 
@@ -68,7 +74,7 @@ export class SeedanceProvider implements VideoProvider {
     const task = (await response.json()) as ArkTaskResponse;
 
     if (!task.id) {
-      throw new VideoProviderError("视频服务未返回任务编号。");
+      throw new VideoProviderError("api.createFailed");
     }
 
     return { taskId: task.id };
@@ -87,14 +93,14 @@ export class SeedanceProvider implements VideoProvider {
       status === "succeeded" &&
       (typeof videoUrl !== "string" || !videoUrl.trim())
     ) {
-      throw new VideoProviderError("视频服务未返回可播放的视频地址。");
+      throw new VideoProviderError("api.providerNoVideoUrl");
     }
 
     return {
       taskId: task.id ?? taskId,
       status,
       videoUrl: status === "succeeded" ? videoUrl : undefined,
-      error: status === "failed" ? "视频生成失败，请调整提示词后重试。" : undefined,
+      errorCode: status === "failed" ? "api.providerGenerationFailed" : undefined,
     };
   }
 
@@ -102,7 +108,7 @@ export class SeedanceProvider implements VideoProvider {
     const apiKey = process.env.SEEDANCE_API_KEY;
 
     if (!apiKey) {
-      throw new VideoProviderError("服务器尚未配置 Seedance API Key。", 503);
+      throw new VideoProviderError("api.providerNoKey", 503);
     }
 
     try {
@@ -118,10 +124,7 @@ export class SeedanceProvider implements VideoProvider {
 
       if (!response.ok) {
         const errorPayload = await response.json().catch(() => null) as ArkErrorResponse | null;
-        throw new VideoProviderError(
-          messageForStatus(response.status, errorPayload),
-          response.status,
-        );
+        throw errorForStatus(response.status, errorPayload);
       }
 
       return response;
@@ -130,7 +133,7 @@ export class SeedanceProvider implements VideoProvider {
         throw error;
       }
 
-      throw new VideoProviderError("无法连接视频服务，请稍后重试。");
+      throw new VideoProviderError("api.providerConnectFailed");
     }
   }
 }
@@ -152,26 +155,29 @@ function normalizeStatus(status: string | undefined): VideoTaskState {
   }
 }
 
-function messageForStatus(statusCode: number, payload?: ArkErrorResponse | null): string {
+function errorForStatus(statusCode: number, payload?: ArkErrorResponse | null): VideoProviderError {
   if (statusCode === 401 || statusCode === 403) {
-    return "视频服务认证失败，请检查服务器 API Key 配置。";
+    return new VideoProviderError("api.providerAuthFailed", statusCode);
   }
 
   if (statusCode === 429) {
-    return "视频服务繁忙，请稍后再试。";
+    return new VideoProviderError("api.providerBusy", statusCode);
   }
 
   const code = payload?.error?.code?.trim();
   const detail = sanitizeErrorDetail(payload?.error?.message);
-  const label = code ? `HTTP ${statusCode}，${code}` : `HTTP ${statusCode}`;
-  return detail
-    ? `视频服务请求失败（${label}）：${detail}`
-    : `视频服务请求失败（${label}）。`;
+  const label = code ? `HTTP ${statusCode}, ${code}` : `HTTP ${statusCode}`;
+  return new VideoProviderError(
+    "api.providerHttpError",
+    statusCode,
+    { label },
+    detail ? `: ${detail}` : "",
+  );
 }
 
 function sanitizeErrorDetail(value: string | undefined): string | undefined {
   const detail = value
-    ?.replace(/Bearer\s+\S+/gi, "Bearer [已隐藏]")
+    ?.replace(/Bearer\s+\S+/gi, "Bearer [hidden]")
     .replace(/\s+/g, " ")
     .trim();
 

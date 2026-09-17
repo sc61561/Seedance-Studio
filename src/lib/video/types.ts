@@ -26,5 +26,6 @@ export interface VideoTaskStatus {
   taskId: string;
   status: VideoTaskState;
   videoUrl?: string;
-  error?: string;
+  // Stable error code localized on the client (see src/lib/i18n/messages.ts).
+  errorCode?: string;
 }

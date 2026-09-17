@@ -10,6 +10,7 @@ import {
   modelSupportsResolution,
   resolutionOptions,
 } from "@/lib/video/models";
+import { apiError, type ApiErrorBody, type ApiErrorParams } from "@/lib/video/errors";
 import { maxFinalPromptLength } from "@/lib/video/prompt-compiler";
 import { SeedanceProvider, VideoProviderError } from "@/lib/video/providers/seedance";
 
@@ -23,21 +24,21 @@ export async function POST(request: Request): Promise<Response> {
   const payload = await parseRequest(request);
 
   if (!payload) {
-    return errorResponse("请求格式不正确。");
+    return errorResponse("api.invalidRequest");
   }
 
   const prompt = typeof payload.prompt === "string" ? payload.prompt.trim() : "";
   if (!prompt) {
-    return errorResponse("请输入提示词。");
+    return errorResponse("api.promptRequired");
   }
 
   if (prompt.length > maxFinalPromptLength) {
-    return errorResponse(`提示词不能超过 ${maxFinalPromptLength} 个字符。`);
+    return errorResponse("api.promptTooLong", { n: maxFinalPromptLength });
   }
 
   const referenceImages = resolveReferenceImages(payload);
   if ("error" in referenceImages) {
-    return errorResponse(referenceImages.error);
+    return errorResponse(referenceImages.error.code, referenceImages.error.params);
   }
 
   const modelResolution = resolveModel(payload.model);
@@ -49,21 +50,21 @@ export async function POST(request: Request): Promise<Response> {
     payload.resolution,
     resolutionOptions,
     "720p",
-    "请选择支持的分辨率。",
+    "api.resolutionInvalid",
   );
   if ("error" in resolution) {
     return errorResponse(resolution.error);
   }
 
   if (!modelSupportsResolution(modelResolution.model, resolution.value)) {
-    return errorResponse("该模型不支持所选分辨率。");
+    return errorResponse("api.resolutionUnsupportedByModel");
   }
 
   const aspectRatio = resolveOption(
     payload.aspectRatio,
     aspectRatioOptions,
     "16:9",
-    "请选择支持的画面比例。",
+    "api.aspectInvalid",
   );
   if ("error" in aspectRatio) {
     return errorResponse(aspectRatio.error);
@@ -71,7 +72,7 @@ export async function POST(request: Request): Promise<Response> {
 
   const duration = resolveDuration(payload.duration);
   if ("error" in duration) {
-    return errorResponse(duration.error);
+    return errorResponse(duration.error.code, duration.error.params);
   }
 
   try {
@@ -88,10 +89,10 @@ export async function POST(request: Request): Promise<Response> {
     return Response.json(task);
   } catch (error) {
     if (error instanceof VideoProviderError) {
-      return errorResponse(error.message, error.statusCode);
+      return providerErrorResponse(error);
     }
 
-    return errorResponse("视频任务创建失败，请稍后重试。", 502);
+    return errorResponse("api.createFailed", undefined, 502);
   }
 }
 
@@ -106,59 +107,59 @@ async function parseRequest(request: Request): Promise<Record<string, unknown> |
 
 function validateReferenceImage(value: unknown): string | null {
   if (typeof value !== "string") {
-    return "参考图格式不正确。";
+    return "api.refInvalidFormat";
   }
 
   const match = imageDataUrlPattern.exec(value);
   if (!match) {
-    return "参考图仅支持 PNG、JPEG 或 WebP 格式。";
+    return "api.refUnsupportedType";
   }
 
   const base64 = match[2];
   if (base64.length % 4 !== 0) {
-    return "参考图格式不正确。";
+    return "api.refInvalidFormat";
   }
 
   const padding = base64.endsWith("==") ? 2 : base64.endsWith("=") ? 1 : 0;
   const byteLength = (base64.length * 3) / 4 - padding;
 
   if (byteLength > maxImageBytes) {
-    return "参考图不能超过 8 MB。";
+    return "api.refTooLargeSingle";
   }
 
   const imageBytes = Buffer.from(base64, "base64");
   return hasMatchingImageSignature(match[1], imageBytes)
     ? null
-    : "参考图内容不是有效的 PNG、JPEG 或 WebP 图片。";
+    : "api.refInvalidContent";
 }
 
 function resolveReferenceImages(
   payload: Record<string, unknown>,
-): { urls: string[] } | { error: string } {
+): { urls: string[] } | { error: ApiErrorBody } {
   const value =
     payload.referenceImageDataUrls ??
     (payload.referenceImageDataUrl === undefined ? [] : [payload.referenceImageDataUrl]);
 
   if (!Array.isArray(value) || value.some((item) => typeof item !== "string")) {
-    return { error: "参考图格式不正确。" };
+    return { error: apiError("api.refInvalidFormat") };
   }
 
   if (value.length > maxReferenceImages) {
-    return { error: `参考图最多可上传 ${maxReferenceImages} 张。` };
+    return { error: apiError("api.refTooMany", { n: maxReferenceImages }) };
   }
 
   let totalBytes = 0;
   for (const image of value) {
     const imageError = validateReferenceImage(image);
     if (imageError) {
-      return { error: imageError };
+      return { error: apiError(imageError) };
     }
 
     totalBytes += dataUrlByteLength(image);
   }
 
   if (totalBytes > maxImageBytes) {
-    return { error: "参考图总大小不能超过 8 MB。" };
+    return { error: apiError("api.refTooLargeTotal") };
   }
 
   return { urls: value };
@@ -172,20 +173,20 @@ function dataUrlByteLength(value: string): number {
 
 function resolveModel(value: unknown): { model: string } | { error: string } {
   if (value !== undefined && typeof value !== "string") {
-    return { error: "请选择支持的官方 Seedance 模型。" };
+    return { error: "api.modelUnsupported" };
   }
 
   const modelId = value?.trim() || defaultSeedanceModel();
   const model = getSeedanceModel(modelId);
 
   if (!model) {
-    return { error: "请选择支持的官方 Seedance 模型。" };
+    return { error: "api.modelUnsupported" };
   }
 
   return { model: model.id };
 }
 
-function resolveDuration(value: unknown): { value: number } | { error: string } {
+function resolveDuration(value: unknown): { value: number } | { error: ApiErrorBody } {
   const duration = value === undefined ? defaultDuration : value;
 
   if (
@@ -194,7 +195,9 @@ function resolveDuration(value: unknown): { value: number } | { error: string } 
     duration < minDuration ||
     duration > maxDuration
   ) {
-    return { error: `视频时长需为 ${minDuration} 到 ${maxDuration} 秒之间的整数。` };
+    return {
+      error: apiError("api.durationInvalid", { min: minDuration, max: maxDuration }),
+    };
   }
 
   return { value: duration };
@@ -228,8 +231,15 @@ function hasMatchingImageSignature(mimeType: string, bytes: Buffer): boolean {
   );
 }
 
-function errorResponse(error: string, status = 400): Response {
-  return Response.json({ error }, { status });
+function errorResponse(code: string, params?: ApiErrorParams, status = 400): Response {
+  return Response.json(apiError(code, params), { status });
+}
+
+function providerErrorResponse(error: VideoProviderError): Response {
+  return Response.json(
+    apiError(error.code, error.params, error.detail),
+    { status: error.statusCode },
+  );
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

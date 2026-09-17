@@ -140,7 +140,12 @@ describe("SeedanceProvider", () => {
         prompt: "测试",
       }),
     ).rejects.toEqual(
-      new VideoProviderError("视频服务请求失败（HTTP 400，InvalidParameter）：The prompt is too long.", 400),
+      new VideoProviderError(
+        "api.providerHttpError",
+        400,
+        { label: "HTTP 400, InvalidParameter" },
+        ": The prompt is too long.",
+      ),
     );
   });
 
@@ -170,7 +175,7 @@ describe("SeedanceProvider", () => {
     );
 
     await expect(new SeedanceProvider().getTask("cgt-incomplete")).rejects.toEqual(
-      new VideoProviderError("视频服务未返回可播放的视频地址。"),
+      new VideoProviderError("api.providerNoVideoUrl"),
     );
   });
 
@@ -184,7 +189,7 @@ describe("SeedanceProvider", () => {
     );
 
     await expect(new SeedanceProvider().getTask("cgt-empty-url")).rejects.toEqual(
-      new VideoProviderError("视频服务未返回可播放的视频地址。"),
+      new VideoProviderError("api.providerNoVideoUrl"),
     );
   });
 });

@@ -1,0 +1,278 @@
+export const locales = ["en-US", "zh-CN"] as const;
+export type Locale = (typeof locales)[number];
+export const defaultLocale: Locale = "zh-CN";
+
+export const localeNames: Record<Locale, string> = {
+  "en-US": "English",
+  "zh-CN": "简体中文",
+};
+
+export const htmlLang: Record<Locale, string> = {
+  "en-US": "en",
+  "zh-CN": "zh-CN",
+};
+
+type Dict = Record<string, string>;
+
+// UI copy dictionaries. Both locales share the same keys with non-empty values.
+const en: Dict = {
+  // Top bar
+  "topbar.brand": "SEEDANCE / STUDIO",
+  "topbar.subtitle": "Video creation studio",
+  "topbar.status": "ARK API configured",
+  // Hero
+  "hero.eyebrow": "AI VIDEO GENERATOR",
+  "hero.title": "Quick Start",
+  "hero.subtitle": "Define the frame with a prompt and references — Seedance handles the rest.",
+  // Input section
+  "input.index": "01 / INPUT",
+  "input.heading": "Generation setup",
+  "prompt.label": "Prompt",
+  "prompt.placeholder": "Describe the video you want to generate",
+  "prompt.hint": "The more specific the action and camera description, the more stable the result.",
+  // Model row
+  "model.configured": "Configured model",
+  "model.name": "Seedance video generation",
+  "model.chip": "Volcengine Ark endpoint configured",
+  // Output section
+  "output.index": "02 / OUTPUT",
+  "output.heading": "Output settings",
+  "field.resolution": "Resolution",
+  "field.aspectRatio": "Aspect ratio",
+  "field.duration": "Duration",
+  "duration.value": "{n}s",
+  "duration.min": "{n}s",
+  "duration.max": "{n}s",
+  "field.generationMode": "Generation mode",
+  "advanced.toggle": "Advanced settings",
+  "field.camera": "Camera",
+  "field.motion": "Motion",
+  "field.consistency": "Consistency",
+  // Generation mode options
+  "mode.reference": "Standard reference",
+  "mode.keyframes": "Sequential keyframes",
+  "mode.first-last": "First & last frame",
+  // Camera options
+  "camera.auto": "Auto",
+  "camera.locked": "Locked camera",
+  "camera.push-in": "Slow push-in",
+  "camera.pull-back": "Slow pull-back",
+  // Motion options
+  "motion.auto": "Auto",
+  "motion.low": "Low",
+  "motion.medium": "Medium",
+  "motion.high": "High",
+  // Consistency options
+  "consistency.normal": "Normal",
+  "consistency.high": "High",
+  "consistency.very-high": "Very high",
+  // Mode hints
+  "hint.firstLastNeedTwo": "Upload at least 2 images to use as the first and last frames.",
+  "hint.keyframesNeedTwo": "Upload at least 2 images to establish a time sequence.",
+  "hint.keyframesOrder": "In keyframe mode, image order represents the timeline — drag to reorder.",
+  "hint.referenceOrder": "Images are sent to Seedance in their current numbered order.",
+  // References section
+  "ref.index": "03 / REFERENCES",
+  "ref.heading": "Reference material",
+  "ref.addTitle": "Add reference images",
+  "ref.addDesc": "PNG, JPEG or WebP · up to 10 · total under 8 MB",
+  "ref.choose": "Choose files",
+  "ref.listLabel": "Reference image list",
+  "ref.alt": "Reference {n}",
+  "ref.delete": "Delete {name}",
+  "ref.deleteTitle": "Delete reference image",
+  // Submit
+  "submit.generating": "Generating…",
+  "submit.generate": "Generate video",
+  // Result panel
+  "result.index": "OUTPUT / LIVE",
+  "result.heading": "Result",
+  "result.ready": "Video is ready",
+  "result.download": "Download video",
+  "result.videoUnsupported": "This browser does not support video playback.",
+  // Empty / status states
+  "state.idle.title": "The result will appear here",
+  "state.idle.desc": "Fill in the prompt on the left and submit — the preview and download will show up here.",
+  "state.idle.badge": "Result preview area",
+  "state.submitting.title": "Connecting to the video service",
+  "state.queued.title": "Task submitted, queued",
+  "state.processing.title": "Generating your video, please wait",
+  "state.failed.title": "This generation did not finish",
+  "state.generating.desc": "You can keep waiting — the page updates the task status automatically.",
+  // Task badge
+  "badge.success": "Done",
+  "badge.failed": "Failed",
+  "badge.active": "Processing",
+  "badge.idle": "Awaiting input",
+  // Result footer
+  "result.footer.brand": "Seedance Studio",
+  "result.footer.local": "Kept only in the current session",
+  // Page footer
+  "footer.tagline": "A restrained, controllable AI video interface.",
+  "footer.note": "Reference material is used only for the current task",
+  // Language switcher
+  "lang.label": "Language",
+  // Client-side validation
+  "err.tooManyImages": "You can upload at most {n} reference images.",
+  "err.unsupportedType": "Reference images must be PNG, JPEG or WebP.",
+  "err.totalTooLarge": "Total reference image size cannot exceed 8 MB.",
+  "err.readFailed": "Failed to read the reference image, please select again.",
+  "err.promptWithControlsTooLong": "The prompt plus control instructions cannot exceed {n} characters — please shorten it.",
+  // API / provider error codes (localized on the client)
+  "api.invalidRequest": "Invalid request format.",
+  "api.promptRequired": "Please enter a prompt.",
+  "api.promptTooLong": "The prompt cannot exceed {n} characters.",
+  "api.refInvalidFormat": "Invalid reference image format.",
+  "api.refUnsupportedType": "Reference images must be PNG, JPEG or WebP.",
+  "api.refInvalidContent": "Reference content is not a valid PNG, JPEG or WebP image.",
+  "api.refTooLargeSingle": "A reference image cannot exceed 8 MB.",
+  "api.refTooLargeTotal": "Total reference image size cannot exceed 8 MB.",
+  "api.refTooMany": "You can upload at most {n} reference images.",
+  "api.modelUnsupported": "Please choose a supported official Seedance model.",
+  "api.resolutionUnsupportedByModel": "This model does not support the selected resolution.",
+  "api.resolutionInvalid": "Please choose a supported resolution.",
+  "api.aspectInvalid": "Please choose a supported aspect ratio.",
+  "api.durationInvalid": "Duration must be an integer between {min} and {max} seconds.",
+  "api.createFailed": "Failed to create the video task, please try again.",
+  "api.queryFailed": "Failed to query the video task, please try again.",
+  "api.taskIdInvalid": "Invalid task ID.",
+  "api.providerNoKey": "The server has not configured a Seedance API key.",
+  "api.providerAuthFailed": "Video service authentication failed, please check the server API key configuration.",
+  "api.providerBusy": "The video service is busy, please try again later.",
+  "api.providerNoVideoUrl": "The video service did not return a playable video URL.",
+  "api.providerGenerationFailed": "Video generation failed, adjust the prompt and try again.",
+  "api.providerConnectFailed": "Cannot reach the video service, please try again later.",
+  "api.providerHttpError": "Video service request failed ({label}){detail}.",
+};
+
+const zh: Dict = {
+  "topbar.brand": "SEEDANCE / STUDIO",
+  "topbar.subtitle": "视频创作工作台",
+  "topbar.status": "ARK API 已配置",
+  "hero.eyebrow": "AI VIDEO GENERATOR",
+  "hero.title": "快速开始",
+  "hero.subtitle": "用提示词和参考素材定义画面，剩下的交给 Seedance。",
+  "input.index": "01 / INPUT",
+  "input.heading": "生成设定",
+  "prompt.label": "提示词",
+  "prompt.placeholder": "请输入你想生成的视频内容",
+  "prompt.hint": "越具体的动作和镜头描述，越容易得到稳定结果。",
+  "model.configured": "已配置模型",
+  "model.name": "Seedance 视频生成",
+  "model.chip": "火山方舟接入点已配置",
+  "output.index": "02 / OUTPUT",
+  "output.heading": "输出设置",
+  "field.resolution": "分辨率",
+  "field.aspectRatio": "画面比例",
+  "field.duration": "视频时长",
+  "duration.value": "{n} 秒",
+  "duration.min": "{n} 秒",
+  "duration.max": "{n} 秒",
+  "field.generationMode": "生成模式",
+  "advanced.toggle": "高级设置",
+  "field.camera": "镜头",
+  "field.motion": "运动幅度",
+  "field.consistency": "一致性",
+  "mode.reference": "普通参考",
+  "mode.keyframes": "连续关键帧",
+  "mode.first-last": "首尾帧",
+  "camera.auto": "自动",
+  "camera.locked": "固定镜头",
+  "camera.push-in": "缓慢推进",
+  "camera.pull-back": "缓慢拉远",
+  "motion.auto": "自动",
+  "motion.low": "低",
+  "motion.medium": "中",
+  "motion.high": "高",
+  "consistency.normal": "普通",
+  "consistency.high": "高",
+  "consistency.very-high": "极高",
+  "hint.firstLastNeedTwo": "建议上传至少 2 张图片作为首尾帧。",
+  "hint.keyframesNeedTwo": "建议上传至少 2 张图片以建立时间顺序。",
+  "hint.keyframesOrder": "连续关键帧模式下，图片顺序代表视频中的时间顺序，可拖拽调整。",
+  "hint.referenceOrder": "图片顺序会按当前编号发送给 Seedance。",
+  "ref.index": "03 / REFERENCES",
+  "ref.heading": "参考素材",
+  "ref.addTitle": "添加参考图",
+  "ref.addDesc": "PNG、JPEG 或 WebP · 最多 10 张 · 总大小不超过 8 MB",
+  "ref.choose": "选择文件",
+  "ref.listLabel": "参考图列表",
+  "ref.alt": "参考图 {n}",
+  "ref.delete": "删除 {name}",
+  "ref.deleteTitle": "删除参考图",
+  "submit.generating": "正在生成…",
+  "submit.generate": "生成视频",
+  "result.index": "OUTPUT / LIVE",
+  "result.heading": "生成结果",
+  "result.ready": "视频已准备好",
+  "result.download": "下载视频",
+  "result.videoUnsupported": "当前浏览器不支持视频播放。",
+  "state.idle.title": "生成结果会显示在这里",
+  "state.idle.desc": "填写左侧提示词并提交后，视频预览与下载入口会出现在这里。",
+  "state.idle.badge": "结果预览区",
+  "state.submitting.title": "正在连接视频服务",
+  "state.queued.title": "任务已提交，正在排队",
+  "state.processing.title": "视频正在生成，请耐心等待",
+  "state.failed.title": "这次生成没有完成",
+  "state.generating.desc": "你可以继续等待，页面会自动更新任务状态。",
+  "badge.success": "完成",
+  "badge.failed": "失败",
+  "badge.active": "处理中",
+  "badge.idle": "等待输入",
+  "result.footer.brand": "Seedance Studio",
+  "result.footer.local": "仅在本地保存当前会话",
+  "footer.tagline": "一个克制、可控的 AI 视频创作界面。",
+  "footer.note": "参考素材仅用于当前生成任务",
+  "lang.label": "语言",
+  "err.tooManyImages": "参考图最多可上传 {n} 张。",
+  "err.unsupportedType": "参考图仅支持 PNG、JPEG 或 WebP 格式。",
+  "err.totalTooLarge": "参考图总大小不能超过 8 MB。",
+  "err.readFailed": "读取参考图失败，请重新选择。",
+  "err.promptWithControlsTooLong": "当前提示词加控制指令后不能超过 {n} 个字符，请缩短提示词。",
+  "api.invalidRequest": "请求格式不正确。",
+  "api.promptRequired": "请输入提示词。",
+  "api.promptTooLong": "提示词不能超过 {n} 个字符。",
+  "api.refInvalidFormat": "参考图格式不正确。",
+  "api.refUnsupportedType": "参考图仅支持 PNG、JPEG 或 WebP 格式。",
+  "api.refInvalidContent": "参考图内容不是有效的 PNG、JPEG 或 WebP 图片。",
+  "api.refTooLargeSingle": "参考图不能超过 8 MB。",
+  "api.refTooLargeTotal": "参考图总大小不能超过 8 MB。",
+  "api.refTooMany": "参考图最多可上传 {n} 张。",
+  "api.modelUnsupported": "请选择支持的官方 Seedance 模型。",
+  "api.resolutionUnsupportedByModel": "该模型不支持所选分辨率。",
+  "api.resolutionInvalid": "请选择支持的分辨率。",
+  "api.aspectInvalid": "请选择支持的画面比例。",
+  "api.durationInvalid": "视频时长需为 {min} 到 {max} 秒之间的整数。",
+  "api.createFailed": "视频任务创建失败，请稍后重试。",
+  "api.queryFailed": "视频任务查询失败，请稍后重试。",
+  "api.taskIdInvalid": "任务编号不正确。",
+  "api.providerNoKey": "服务器尚未配置 Seedance API Key。",
+  "api.providerAuthFailed": "视频服务认证失败，请检查服务器 API Key 配置。",
+  "api.providerBusy": "视频服务繁忙，请稍后再试。",
+  "api.providerNoVideoUrl": "视频服务未返回可播放的视频地址。",
+  "api.providerGenerationFailed": "视频生成失败，请调整提示词后重试。",
+  "api.providerConnectFailed": "无法连接视频服务，请稍后重试。",
+  "api.providerHttpError": "视频服务请求失败（{label}）{detail}。",
+};
+
+export const messages: Record<Locale, Dict> = {
+  "en-US": en,
+  "zh-CN": zh,
+};
+
+export type MessageKey = keyof typeof en;
+
+export function translate(
+  locale: Locale,
+  key: string,
+  params?: Record<string, string | number>,
+): string {
+  const dict = messages[locale] ?? messages[defaultLocale];
+  let text = dict[key] ?? messages[defaultLocale][key] ?? key;
+  if (params) {
+    for (const [name, value] of Object.entries(params)) {
+      text = text.replaceAll(`{${name}}`, String(value));
+    }
+  }
+  return text;
+}

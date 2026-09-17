@@ -9,7 +9,6 @@ import {
   CircleAlert,
   Clapperboard,
   Download,
-  FileImage,
   Film,
   GripVertical,
   ImagePlus,
@@ -41,15 +40,29 @@ import {
   minDuration,
   resolutionOptions,
 } from "@/lib/video/models";
+import { useI18n } from "@/lib/i18n/context";
+import { LanguageSwitcher } from "@/components/studio/language-switcher";
 
 type VideoTaskState = "idle" | "submitting" | "queued" | "processing" | "succeeded" | "failed";
 type VideoTask = { taskId: string; status: VideoTaskState; videoUrl?: string; error?: string };
+
+type ApiErrorBody = { code?: string; params?: Record<string, string | number>; detail?: string };
 
 const maxImageBytes = 8 * 1024 * 1024;
 const maxReferenceImages = 10;
 const acceptedImageTypes = new Set(["image/jpeg", "image/png", "image/webp"]);
 
 export function VideoGenerator() {
+  const { t } = useI18n();
+
+  // Localize an API error body ({ code, params, detail }) using the shared dictionary.
+  const localizeApiError = (body: ApiErrorBody | undefined, fallbackKey: string): string => {
+    if (body?.code) {
+      return t(body.code, { ...(body.params ?? {}), detail: body.detail ?? "" });
+    }
+    return t(fallbackKey);
+  };
+
   const [prompt, setPrompt] = useState("");
   const [resolution, setResolution] = useState<(typeof resolutionOptions)[number]>("720p");
   const [aspectRatio, setAspectRatio] = useState<(typeof aspectRatioOptions)[number]>("16:9");
@@ -87,28 +100,28 @@ export function VideoGenerator() {
 
   const isGenerating = task.status === "submitting" || task.status === "queued" || task.status === "processing";
   const modeHint = generationMode === "first-last" && referenceImages.length < 2
-    ? "建议上传至少 2 张图片作为首尾帧。"
+    ? t("hint.firstLastNeedTwo")
     : generationMode === "keyframes" && referenceImages.length < 2
-      ? "建议上传至少 2 张图片以建立时间顺序。"
+      ? t("hint.keyframesNeedTwo")
       : generationMode === "keyframes"
-        ? "连续关键帧模式下，图片顺序代表视频中的时间顺序，可拖拽调整。"
-        : "图片顺序会按当前编号发送给 Seedance。";
+        ? t("hint.keyframesOrder")
+        : t("hint.referenceOrder");
 
   async function handleReferenceImageChange(files: FileList | null) {
     const selectedFiles = Array.from(files ?? []);
     if (selectedFiles.length === 0) return;
     if (referenceImages.length + selectedFiles.length > maxReferenceImages) {
-      setTask({ taskId: "", status: "failed", error: `参考图最多可上传 ${maxReferenceImages} 张。` });
+      setTask({ taskId: "", status: "failed", error: t("err.tooManyImages", { n: maxReferenceImages }) });
       return;
     }
     if (selectedFiles.some((file) => !acceptedImageTypes.has(file.type))) {
-      setTask({ taskId: "", status: "failed", error: "参考图仅支持 PNG、JPEG 或 WebP 格式。" });
+      setTask({ taskId: "", status: "failed", error: t("err.unsupportedType") });
       return;
     }
     const existingBytes = referenceImages.reduce((total, image) => total + dataUrlByteLength(image.dataUrl), 0);
     const selectedBytes = selectedFiles.reduce((total, file) => total + file.size, 0);
     if (existingBytes + selectedBytes > maxImageBytes) {
-      setTask({ taskId: "", status: "failed", error: "参考图总大小不能超过 8 MB。" });
+      setTask({ taskId: "", status: "failed", error: t("err.totalTooLarge") });
       return;
     }
     try {
@@ -124,7 +137,7 @@ export function VideoGenerator() {
       setTask({ taskId: "", status: "idle" });
     } catch {
       if (isMountedRef.current) {
-        setTask({ taskId: "", status: "failed", error: "读取参考图失败，请重新选择。" });
+        setTask({ taskId: "", status: "failed", error: t("err.readFailed") });
       }
     }
   }
@@ -163,7 +176,7 @@ export function VideoGenerator() {
       setTask({
         taskId: "",
         status: "failed",
-        error: `当前提示词加控制指令后不能超过 ${maxFinalPromptLength} 个字符，请缩短提示词。`,
+        error: t("err.promptWithControlsTooLong", { n: maxFinalPromptLength }),
       });
       return;
     }
@@ -184,10 +197,10 @@ export function VideoGenerator() {
           referenceImageDataUrls: imagesForGeneration.map((image) => image.dataUrl),
         }),
       });
-      const payload = (await response.json()) as { taskId?: string; error?: string };
+      const payload = (await response.json()) as { taskId?: string } & ApiErrorBody;
       if (!isMountedRef.current || controller.signal.aborted) return;
       if (!response.ok || !payload.taskId) {
-        throw new Error(payload.error ?? "视频任务创建失败，请稍后重试。");
+        throw new Error(localizeApiError(payload, "api.createFailed"));
       }
       const nextTask = { taskId: payload.taskId, status: "queued" as const };
       setTask(nextTask);
@@ -197,7 +210,7 @@ export function VideoGenerator() {
       setTask({
         taskId: "",
         status: "failed",
-        error: error instanceof Error ? error.message : "视频任务创建失败，请稍后重试。",
+        error: error instanceof Error ? error.message : t("api.createFailed"),
       });
     } finally {
       if (submitAbortRef.current === controller) submitAbortRef.current = null;
@@ -213,10 +226,20 @@ export function VideoGenerator() {
         cache: "no-store",
         signal: controller.signal,
       });
-      const payload = (await response.json()) as VideoTask;
+      const payload = (await response.json()) as {
+        taskId: string;
+        status: VideoTaskState;
+        videoUrl?: string;
+        errorCode?: string;
+      } & ApiErrorBody;
       if (!isMountedRef.current || controller.signal.aborted) return;
-      if (!response.ok) throw new Error(payload.error ?? "视频任务查询失败，请稍后重试。");
-      setTask(payload);
+      if (!response.ok) throw new Error(localizeApiError(payload, "api.queryFailed"));
+      setTask({
+        taskId: payload.taskId,
+        status: payload.status,
+        videoUrl: payload.videoUrl,
+        error: payload.errorCode ? t(payload.errorCode) : undefined,
+      });
       if (payload.status === "succeeded" || payload.status === "failed") {
         stopPolling();
         return;
@@ -229,7 +252,7 @@ export function VideoGenerator() {
       setTask({
         taskId,
         status: "failed",
-        error: error instanceof Error ? error.message : "视频任务查询失败，请稍后重试。",
+        error: error instanceof Error ? error.message : t("api.queryFailed"),
       });
       stopPolling();
     } finally {
@@ -238,48 +261,46 @@ export function VideoGenerator() {
   }
 
   return (
-    <main className="studio-shell min-h-screen px-4 py-5 text-stone-100 sm:px-6 sm:py-8 lg:px-10">
-      <div className="mx-auto w-full max-w-[1440px]">
-        <header className="studio-topbar mb-8 flex items-center justify-between gap-4 pb-5 sm:mb-12">
+    <main className="studio-shell app-shell px-4 py-5 text-[var(--text)] sm:px-6 sm:py-8 lg:px-10">
+      <div className="mx-auto w-full max-w-[1320px]">
+        <header className="studio-topbar mb-9 flex items-center justify-between gap-4 pb-5 sm:mb-12">
           <div className="flex items-center gap-3">
-            <div className="studio-mark flex size-9 items-center justify-center rounded-xl" aria-hidden="true">
-              <Clapperboard className="size-4" strokeWidth={1.8} />
+            <div className="studio-mark flex size-9 items-center justify-center" aria-hidden="true">
+              <Clapperboard className="size-4" strokeWidth={1.6} />
             </div>
             <div>
-              <p className="studio-eyebrow">SEEDANCE / STUDIO</p>
-              <p className="mt-1 text-xs text-stone-500">视频创作工作台</p>
+              <p className="text-sm font-medium tracking-tight text-[var(--text)]">Seedance Studio</p>
+              <p className="mt-0.5 text-xs text-[var(--text-3)]">{t("topbar.subtitle")}</p>
             </div>
           </div>
-          <div className="studio-status hidden items-center gap-2 sm:flex">
-            <span className="studio-status-dot" aria-hidden="true" />
-            <span>ARK API 已配置</span>
+          <div className="flex items-center gap-3">
+            <div className="studio-status hidden items-center gap-2 sm:flex">
+              <span className="studio-status-dot" aria-hidden="true" />
+              <span>{t("topbar.status")}</span>
+            </div>
+            <LanguageSwitcher />
           </div>
         </header>
 
-        <div className="mb-8 max-w-3xl sm:mb-10">
-          <p className="studio-eyebrow mb-3">AI VIDEO GENERATOR</p>
-          <h1 className="studio-title">把一个想法，变成一段镜头。</h1>
-          <p className="mt-4 max-w-xl text-sm leading-6 text-stone-400 sm:text-base">
-            用提示词和参考素材定义画面，剩下的交给 Seedance。
+        <div className="mb-9 max-w-3xl sm:mb-11">
+          <p className="studio-eyebrow mb-3">{t("hero.eyebrow")}</p>
+          <h1 className="studio-title">{t("hero.title")}</h1>
+          <p className="mt-4 max-w-xl text-sm leading-6 text-[var(--text-2)] sm:text-base">
+            {t("hero.subtitle")}
           </p>
         </div>
 
-        <div className="grid items-start gap-6 lg:grid-cols-[minmax(0,1.08fr)_minmax(370px,0.92fr)] xl:gap-8">
+        <div className="mx-auto grid w-full max-w-[660px] items-start gap-[18px]">
           <section className="studio-panel overflow-hidden">
-            <div className="border-b border-stone-800/80 px-5 py-5 sm:px-7">
-              <div className="flex items-center justify-between gap-4">
-                <div>
-                  <p className="studio-index">01 / INPUT</p>
-                  <h2 className="mt-2 text-lg font-medium tracking-tight text-stone-100">生成设定</h2>
-                </div>
-                <Sparkles className="size-5 text-lime-300/80" strokeWidth={1.6} aria-hidden="true" />
-              </div>
+            <div className="flex items-center justify-between gap-3 border-b border-[var(--line)] px-4 py-4 sm:px-[22px]">
+              <h2 className="studio-panel-title">{t("input.heading")}</h2>
+              <span className="studio-index">01</span>
             </div>
 
             <form className="space-y-0" onSubmit={handleSubmit}>
               <div className="studio-form-section">
                 <div className="mb-3 flex items-end justify-between gap-4">
-                  <label className="studio-label" htmlFor="video-prompt">提示词</label>
+                  <label className="studio-label" htmlFor="video-prompt">{t("prompt.label")}</label>
                   <span className="studio-counter" aria-live="polite">{prompt.length} / {maxFinalPromptLength}</span>
                 </div>
                 <textarea
@@ -287,45 +308,42 @@ export function VideoGenerator() {
                   className="studio-textarea min-h-44"
                   value={prompt}
                   onChange={(event) => setPrompt(event.target.value)}
-                  placeholder="请输入你想生成的视频内容"
+                  placeholder={t("prompt.placeholder")}
                   maxLength={maxFinalPromptLength}
                   disabled={isGenerating}
                   required
                 />
-                <p className="mt-2 text-xs text-stone-500">越具体的动作和镜头描述，越容易得到稳定结果。</p>
+                <p className="mt-2 text-xs text-[var(--text-3)]">{t("prompt.hint")}</p>
               </div>
 
               <div className="studio-model-row flex items-center justify-between gap-4 px-5 py-4 sm:px-7">
                 <div className="flex min-w-0 items-center gap-3">
                   <div className="studio-model-icon flex size-9 shrink-0 items-center justify-center rounded-lg" aria-hidden="true">
-                    <Film className="size-4" strokeWidth={1.7} />
+                    <Film className="size-4" strokeWidth={1.6} />
                   </div>
                   <div className="min-w-0">
-                    <p className="studio-label">已配置模型</p>
-                    <p className="mt-1 truncate text-sm text-stone-200">Seedance 视频生成</p>
+                    <p className="studio-label">{t("model.configured")}</p>
+                    <p className="mt-1 truncate text-sm text-[var(--text)]">{t("model.name")}</p>
                   </div>
                 </div>
-                <span className="studio-chip shrink-0"><Check className="size-3" /> 火山方舟接入点已配置</span>
+                <span className="studio-chip shrink-0"><Check className="size-3" /> {t("model.chip")}</span>
               </div>
 
-              <div className="studio-form-section border-t border-stone-800/80">
+              <div className="studio-form-section border-t border-[var(--line)]">
                 <div className="mb-4 flex items-center justify-between gap-4">
-                  <div>
-                    <p className="studio-index">02 / OUTPUT</p>
-                    <h2 className="mt-2 text-lg font-medium tracking-tight text-stone-100">输出设置</h2>
-                  </div>
-                  <SlidersHorizontal className="size-5 text-stone-500" strokeWidth={1.6} aria-hidden="true" />
+                  <h2 className="studio-panel-title">{t("output.heading")}</h2>
+                  <span className="studio-index">02</span>
                 </div>
 
                 <div className="grid gap-4 sm:grid-cols-2">
-                  <SelectField label="分辨率" value={resolution} onChange={(value) => setResolution(value as typeof resolution)} disabled={isGenerating} options={resolutionOptions} />
-                  <SelectField label="画面比例" value={aspectRatio} onChange={(value) => setAspectRatio(value as typeof aspectRatio)} disabled={isGenerating} options={aspectRatioOptions} />
+                  <SelectField label={t("field.resolution")} value={resolution} onChange={(value) => setResolution(value as typeof resolution)} disabled={isGenerating} options={resolutionOptions} />
+                  <SelectField label={t("field.aspectRatio")} value={aspectRatio} onChange={(value) => setAspectRatio(value as typeof aspectRatio)} disabled={isGenerating} options={aspectRatioOptions} />
                 </div>
 
                 <label className="mt-5 block" htmlFor="video-duration">
                   <span className="mb-3 flex items-center justify-between gap-4">
-                    <span className="studio-label">视频时长</span>
-                    <span className="studio-value">{duration} 秒</span>
+                    <span className="studio-label">{t("field.duration")}</span>
+                    <span className="studio-value">{t("duration.value", { n: duration })}</span>
                   </span>
                   <input
                     id="video-duration"
@@ -337,35 +355,32 @@ export function VideoGenerator() {
                     value={duration}
                     onChange={(event) => setDuration(Number(event.target.value))}
                     disabled={isGenerating}
-                    aria-label="视频时长"
+                    aria-label={t("field.duration")}
                   />
-                  <span className="mt-2 flex justify-between text-[11px] text-stone-600"><span>{minDuration} 秒</span><span>{maxDuration} 秒</span></span>
+                  <span className="mt-2 flex justify-between text-[11px] text-[var(--text-3)]"><span>{t("duration.min", { n: minDuration })}</span><span>{t("duration.max", { n: maxDuration })}</span></span>
                 </label>
 
                 <div className="mt-5">
-                  <SelectField label="生成模式" value={generationMode} onChange={(value) => setGenerationMode(value as GenerationMode)} disabled={isGenerating} options={[["reference", "普通参考"], ["keyframes", "连续关键帧"], ["first-last", "首尾帧"]]} />
+                  <SelectField label={t("field.generationMode")} value={generationMode} onChange={(value) => setGenerationMode(value as GenerationMode)} disabled={isGenerating} options={[["reference", t("mode.reference")], ["keyframes", t("mode.keyframes")], ["first-last", t("mode.first-last")]]} />
                 </div>
 
                 <details className="studio-details mt-5" open>
                   <summary className="flex cursor-pointer list-none items-center justify-between gap-4">
-                    <span className="flex items-center gap-2"><SlidersHorizontal className="size-3.5 text-stone-500" /> 高级设置</span>
-                    <ChevronDown className="size-4 text-stone-500 transition-transform" />
+                    <span className="flex items-center gap-2"><SlidersHorizontal className="size-3.5 text-[var(--text-3)]" /> {t("advanced.toggle")}</span>
+                    <ChevronDown className="size-4 text-[var(--text-3)] transition-transform" />
                   </summary>
                   <div className="mt-4 grid gap-4 sm:grid-cols-3">
-                    <SelectField label="镜头" value={cameraMode} onChange={(value) => setCameraMode(value as CameraMode)} disabled={isGenerating} options={[["auto", "自动"], ["locked", "固定镜头"], ["push-in", "缓慢推进"], ["pull-back", "缓慢拉远"]]} />
-                    <SelectField label="运动幅度" value={motionLevel} onChange={(value) => setMotionLevel(value as MotionLevel)} disabled={isGenerating} options={[["auto", "自动"], ["low", "低"], ["medium", "中"], ["high", "高"]]} />
-                    <SelectField label="一致性" value={consistencyLevel} onChange={(value) => setConsistencyLevel(value as ConsistencyLevel)} disabled={isGenerating} options={[["normal", "普通"], ["high", "高"], ["very-high", "极高"]]} />
+                    <SelectField label={t("field.camera")} value={cameraMode} onChange={(value) => setCameraMode(value as CameraMode)} disabled={isGenerating} options={[["auto", t("camera.auto")], ["locked", t("camera.locked")], ["push-in", t("camera.push-in")], ["pull-back", t("camera.pull-back")]]} />
+                    <SelectField label={t("field.motion")} value={motionLevel} onChange={(value) => setMotionLevel(value as MotionLevel)} disabled={isGenerating} options={[["auto", t("motion.auto")], ["low", t("motion.low")], ["medium", t("motion.medium")], ["high", t("motion.high")]]} />
+                    <SelectField label={t("field.consistency")} value={consistencyLevel} onChange={(value) => setConsistencyLevel(value as ConsistencyLevel)} disabled={isGenerating} options={[["normal", t("consistency.normal")], ["high", t("consistency.high")], ["very-high", t("consistency.very-high")]]} />
                   </div>
                 </details>
               </div>
 
-              <div className="studio-form-section border-t border-stone-800/80">
-                <div className="mb-4 flex items-end justify-between gap-4">
-                  <div>
-                    <p className="studio-index">03 / REFERENCES</p>
-                    <h2 className="mt-2 text-lg font-medium tracking-tight text-stone-100">参考素材</h2>
-                  </div>
-                  <span className="studio-counter">{referenceImages.length} / {maxReferenceImages}</span>
+              <div className="studio-form-section border-t border-[var(--line)]">
+                <div className="mb-4 flex items-center justify-between gap-4">
+                  <h2 className="studio-panel-title">{t("ref.heading")}</h2>
+                  <span className="studio-index">{referenceImages.length}/{maxReferenceImages}</span>
                 </div>
 
                 <label className="studio-upload group block" htmlFor="reference-images">
@@ -379,15 +394,15 @@ export function VideoGenerator() {
                     disabled={isGenerating}
                   />
                   <span className="studio-upload-icon"><ImagePlus className="size-5" strokeWidth={1.6} /></span>
-                  <span className="mt-3 block text-sm font-medium text-stone-200">添加参考图</span>
-                  <span className="mt-1 block text-xs text-stone-500">PNG、JPEG 或 WebP · 最多 10 张 · 总大小不超过 8 MB</span>
-                  <span className="mt-4 inline-flex items-center gap-1.5 text-xs font-medium text-lime-200 transition-colors group-hover:text-lime-100"><Upload className="size-3.5" /> 选择文件</span>
+                  <span className="mt-3 block text-sm font-medium text-[var(--text)]">{t("ref.addTitle")}</span>
+                  <span className="mt-1 block text-xs text-[var(--text-3)]">{t("ref.addDesc")}</span>
+                  <span className="mt-4 inline-flex items-center gap-1.5 text-xs font-medium text-[var(--text-2)] transition-colors group-hover:text-[var(--text)]"><Upload className="size-3.5" /> {t("ref.choose")}</span>
                 </label>
 
-                <p className="mt-3 text-xs leading-5 text-stone-500">{modeHint}</p>
+                <p className="mt-3 text-xs leading-5 text-[var(--text-3)]">{modeHint}</p>
 
                 {referenceImages.length > 0 && (
-                  <ol className="mt-5 grid grid-cols-2 gap-2.5 sm:grid-cols-3" aria-label="参考图列表">
+                  <ol className="mt-5 grid grid-cols-2 gap-2.5 sm:grid-cols-3" aria-label={t("ref.listLabel")}>
                     {referenceImages.map((image, index) => (
                       <li
                         key={image.id}
@@ -400,22 +415,22 @@ export function VideoGenerator() {
                       >
                         {/* Data URLs are intentionally kept local so the preview never leaves the browser. */}
                         {/* eslint-disable-next-line @next/next/no-img-element */}
-                        <img className="aspect-[4/3] w-full object-cover" src={image.dataUrl} alt={`参考图 ${index + 1}`} />
-                        <div className="flex items-center justify-between gap-2 border-t border-stone-800/80 px-2.5 py-2">
-                          <span className="flex min-w-0 items-center gap-1.5 text-[11px] text-stone-400"><GripVertical className="size-3 shrink-0 text-stone-600" /> {String(index + 1).padStart(2, "0")}</span>
-                          <span className="min-w-0 truncate text-[11px] text-stone-500" title={image.name}>{image.name}</span>
+                        <img className="aspect-[4/3] w-full object-cover" src={image.dataUrl} alt={t("ref.alt", { n: index + 1 })} />
+                        <div className="flex items-center justify-between gap-2 border-t border-[var(--line)] px-2.5 py-2">
+                          <span className="flex min-w-0 items-center gap-1.5 text-[11px] text-[var(--text-2)]"><GripVertical className="size-3 shrink-0 text-[var(--text-3)]" /> {String(index + 1).padStart(2, "0")}</span>
+                          <span className="min-w-0 truncate text-[11px] text-[var(--text-3)]" title={image.name}>{image.name}</span>
                         </div>
-                        <button className="studio-icon-button absolute right-2 top-2 opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100" type="button" onClick={() => removeReferenceImage(image.id)} disabled={isGenerating} aria-label={`删除 ${image.name}`} title="删除参考图"><Trash2 className="size-3.5" /></button>
+                        <button className="studio-icon-button absolute right-2 top-2 opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100" type="button" onClick={() => removeReferenceImage(image.id)} disabled={isGenerating} aria-label={t("ref.delete", { name: image.name })} title={t("ref.deleteTitle")}><Trash2 className="size-3.5" /></button>
                       </li>
                     ))}
                   </ol>
                 )}
               </div>
 
-              <div className="border-t border-stone-800/80 p-5 sm:px-7 sm:py-6">
+              <div className="border-t border-[var(--line)] p-5 sm:px-7 sm:py-6">
                 <button className="studio-submit group flex w-full items-center justify-center gap-2" type="submit" disabled={!prompt.trim() || isGenerating}>
-                  {isGenerating ? <LoaderCircle className="size-4 animate-spin" /> : <Sparkles className="size-4 transition-transform group-hover:rotate-12" />}
-                  <span>{isGenerating ? "正在生成…" : "生成视频"}</span>
+                  {isGenerating ? <LoaderCircle className="size-4 animate-spin" /> : <Sparkles className="size-4" />}
+                  <span>{isGenerating ? t("submit.generating") : t("submit.generate")}</span>
                   {!isGenerating && <ArrowUpRight className="size-4 transition-transform group-hover:-translate-y-0.5 group-hover:translate-x-0.5" />}
                 </button>
               </div>
@@ -423,11 +438,8 @@ export function VideoGenerator() {
           </section>
 
           <section className="studio-result-panel lg:sticky lg:top-8" aria-live="polite">
-            <div className="flex items-center justify-between gap-4 border-b border-stone-800/80 px-5 py-5 sm:px-7">
-              <div>
-                <p className="studio-index">OUTPUT / LIVE</p>
-                <h2 className="mt-2 text-lg font-medium tracking-tight text-stone-100">生成结果</h2>
-              </div>
+            <div className="flex items-center justify-between gap-4 border-b border-[var(--line)] px-5 py-5 sm:px-7">
+              <h2 className="studio-panel-title">{t("result.heading")}</h2>
               <TaskBadge status={task.status} />
             </div>
 
@@ -436,12 +448,12 @@ export function VideoGenerator() {
                 <div className="space-y-4">
                   <div className="studio-video-frame">
                     <video className="aspect-video w-full object-contain" controls src={task.videoUrl}>
-                      当前浏览器不支持视频播放。
+                      {t("result.videoUnsupported")}
                     </video>
                   </div>
                   <div className="flex items-center justify-between gap-3">
-                    <p className="flex items-center gap-2 text-xs text-lime-200"><Check className="size-3.5" /> 视频已准备好</p>
-                    <a className="studio-download-button" href={task.videoUrl} target="_blank" rel="noreferrer" download><Download className="size-3.5" /> 下载视频</a>
+                    <p className="flex items-center gap-2 text-xs text-[var(--text-2)]"><Check className="size-3.5" /> {t("result.ready")}</p>
+                    <a className="studio-download-button" href={task.videoUrl} target="_blank" rel="noreferrer" download><Download className="size-3.5" /> {t("result.download")}</a>
                   </div>
                 </div>
               ) : (
@@ -449,35 +461,32 @@ export function VideoGenerator() {
                   <div className="studio-empty-icon" aria-hidden="true">
                     {isGenerating ? <LoaderCircle className="size-6 animate-spin" /> : task.status === "failed" ? <CircleAlert className="size-6" /> : <Play className="ml-0.5 size-6" />}
                   </div>
-                  <p className="mt-5 text-sm font-medium text-stone-200">
-                    {task.status === "idle" && "生成结果会显示在这里"}
-                    {task.status === "submitting" && "正在连接视频服务"}
-                    {task.status === "queued" && "任务已提交，正在排队"}
-                    {task.status === "processing" && "视频正在生成，请耐心等待"}
-                    {task.status === "failed" && "这次生成没有完成"}
+                  <p className="mt-5 text-sm font-medium text-[var(--text)]">
+                    {task.status === "idle" && t("state.idle.title")}
+                    {task.status === "submitting" && t("state.submitting.title")}
+                    {task.status === "queued" && t("state.queued.title")}
+                    {task.status === "processing" && t("state.processing.title")}
+                    {task.status === "failed" && t("state.failed.title")}
                   </p>
-                  <p className="mt-2 max-w-xs text-center text-xs leading-5 text-stone-500">
-                    {task.status === "idle" && "填写左侧提示词并提交后，视频预览与下载入口会出现在这里。"}
-                    {isGenerating && "你可以继续等待，页面会自动更新任务状态。"}
+                  <p className="mt-2 max-w-xs text-center text-xs leading-5 text-[var(--text-3)]">
+                    {task.status === "idle" && t("state.idle.desc")}
+                    {isGenerating && t("state.generating.desc")}
                     {task.status === "failed" && task.error}
                   </p>
-                  {task.status === "idle" && <div className="mt-6 flex items-center gap-2 text-[11px] text-stone-600"><Move className="size-3.5" /> 结果预览区</div>}
+                  {task.status === "idle" && (
+                    <div className="mt-6 flex items-center gap-2 text-[11px] text-[var(--text-3)]">
+                      <Move className="size-3.5" />
+                      {t("state.idle.badge")}
+                    </div>
+                  )}
                 </div>
               )}
-            </div>
-
-            <div className="border-t border-stone-800/80 px-5 py-4 sm:px-7">
-              <div className="flex items-center justify-between gap-4 text-[11px] text-stone-600">
-                <span>Seedance Studio</span>
-                <span>仅在本地保存当前会话</span>
-              </div>
             </div>
           </section>
         </div>
 
-        <footer className="mt-8 flex flex-col gap-2 border-t border-stone-800/70 py-5 text-[11px] text-stone-600 sm:flex-row sm:items-center sm:justify-between">
-          <span>一个克制、可控的 AI 视频创作界面。</span>
-          <span className="inline-flex items-center gap-1.5"><FileImage className="size-3.5" /> 参考素材仅用于当前生成任务</span>
+        <footer className="mt-9 flex items-center justify-between gap-4 border-t border-[var(--line)] py-5 text-[11px] text-[var(--text-3)]">
+          <span>{t("footer.note")}</span>
         </footer>
       </div>
     </main>
@@ -503,17 +512,18 @@ function SelectField({ label, value, onChange, disabled, options }: SelectFieldP
             return <option key={optionValue} value={optionValue}>{optionLabel}</option>;
           })}
         </select>
-        <ChevronDown className="pointer-events-none absolute right-3.5 top-1/2 size-4 -translate-y-1/2 text-stone-500" aria-hidden="true" />
+        <ChevronDown className="pointer-events-none absolute right-3.5 top-1/2 size-4 -translate-y-1/2 text-[var(--text-3)]" aria-hidden="true" />
       </span>
     </label>
   );
 }
 
 function TaskBadge({ status }: { status: VideoTaskState }) {
-  if (status === "succeeded") return <span className="studio-task-badge is-success"><Check className="size-3" /> 完成</span>;
-  if (status === "failed") return <span className="studio-task-badge is-error"><X className="size-3" /> 失败</span>;
-  if (status === "submitting" || status === "queued" || status === "processing") return <span className="studio-task-badge is-active"><span className="studio-status-dot" /> 处理中</span>;
-  return <span className="studio-task-badge">等待输入</span>;
+  const { t } = useI18n();
+  if (status === "succeeded") return <span className="studio-task-badge is-success"><Check className="size-3" /> {t("badge.success")}</span>;
+  if (status === "failed") return <span className="studio-task-badge is-error"><X className="size-3" /> {t("badge.failed")}</span>;
+  if (status === "submitting" || status === "queued" || status === "processing") return <span className="studio-task-badge is-active"><span className="studio-status-dot" /> {t("badge.active")}</span>;
+  return <span className="studio-task-badge">{t("badge.idle")}</span>;
 }
 
 function readFileAsDataUrl(file: File): Promise<string> {

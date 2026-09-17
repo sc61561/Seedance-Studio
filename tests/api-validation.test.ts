@@ -14,14 +14,17 @@ describe("POST /api/generate", () => {
     const response = await POST(requestFor({ prompt: "   " }));
 
     expect(response.status).toBe(400);
-    await expect(response.json()).resolves.toEqual({ error: "请输入提示词。" });
+    await expect(response.json()).resolves.toEqual({ code: "api.promptRequired" });
   });
 
   it("拒绝超过 4000 字符的最终提示词", async () => {
     const response = await POST(requestFor({ prompt: "a".repeat(4_001) }));
 
     expect(response.status).toBe(400);
-    await expect(response.json()).resolves.toEqual({ error: "提示词不能超过 4000 个字符。" });
+    await expect(response.json()).resolves.toEqual({
+      code: "api.promptTooLong",
+      params: { n: 4000 },
+    });
   });
 
   it("拒绝不支持的参考图 data URL", async () => {
@@ -33,9 +36,7 @@ describe("POST /api/generate", () => {
     );
 
     expect(response.status).toBe(400);
-    await expect(response.json()).resolves.toEqual({
-      error: "参考图仅支持 PNG、JPEG 或 WebP 格式。",
-    });
+    await expect(response.json()).resolves.toEqual({ code: "api.refUnsupportedType" });
   });
 
   it("拒绝伪装成图片的内容", async () => {
@@ -47,9 +48,7 @@ describe("POST /api/generate", () => {
     );
 
     expect(response.status).toBe(400);
-    await expect(response.json()).resolves.toEqual({
-      error: "参考图内容不是有效的 PNG、JPEG 或 WebP 图片。",
-    });
+    await expect(response.json()).resolves.toEqual({ code: "api.refInvalidContent" });
   });
 
   it("拒绝超过 8 MB 的参考图", async () => {
@@ -63,9 +62,7 @@ describe("POST /api/generate", () => {
     );
 
     expect(response.status).toBe(400);
-    await expect(response.json()).resolves.toEqual({
-      error: "参考图不能超过 8 MB。",
-    });
+    await expect(response.json()).resolves.toEqual({ code: "api.refTooLargeSingle" });
   });
 
   it("拒绝超过十张的参考图", async () => {
@@ -78,7 +75,8 @@ describe("POST /api/generate", () => {
 
     expect(response.status).toBe(400);
     await expect(response.json()).resolves.toEqual({
-      error: "参考图最多可上传 10 张。",
+      code: "api.refTooMany",
+      params: { n: 10 },
     });
   });
 
@@ -91,9 +89,7 @@ describe("POST /api/generate", () => {
     );
 
     expect(response.status).toBe(400);
-    await expect(response.json()).resolves.toEqual({
-      error: "请选择支持的官方 Seedance 模型。",
-    });
+    await expect(response.json()).resolves.toEqual({ code: "api.modelUnsupported" });
   });
 
   it("拒绝已移出 MVP 的旧版模型", async () => {
@@ -105,9 +101,7 @@ describe("POST /api/generate", () => {
     );
 
     expect(response.status).toBe(400);
-    await expect(response.json()).resolves.toEqual({
-      error: "请选择支持的官方 Seedance 模型。",
-    });
+    await expect(response.json()).resolves.toEqual({ code: "api.modelUnsupported" });
   });
 
   it("拒绝非当前配置的推理接入点", async () => {
@@ -120,9 +114,7 @@ describe("POST /api/generate", () => {
     );
 
     expect(response.status).toBe(400);
-    await expect(response.json()).resolves.toEqual({
-      error: "请选择支持的官方 Seedance 模型。",
-    });
+    await expect(response.json()).resolves.toEqual({ code: "api.modelUnsupported" });
   });
 
   it("允许为已配置的推理接入点选择 1080p", async () => {
@@ -135,9 +127,7 @@ describe("POST /api/generate", () => {
     );
 
     expect(response.status).toBe(503);
-    await expect(response.json()).resolves.toEqual({
-      error: "服务器尚未配置 Seedance API Key。",
-    });
+    await expect(response.json()).resolves.toEqual({ code: "api.providerNoKey" });
   });
 
   it("允许在 2 到 30 秒之间选择任意整数时长", async () => {
@@ -150,9 +140,7 @@ describe("POST /api/generate", () => {
     );
 
     expect(response.status).toBe(503);
-    await expect(response.json()).resolves.toEqual({
-      error: "服务器尚未配置 Seedance API Key。",
-    });
+    await expect(response.json()).resolves.toEqual({ code: "api.providerNoKey" });
   });
 
   it.each([1, 31, 2.5])("拒绝范围外或非整数的视频时长 %s", async (duration) => {
@@ -160,7 +148,8 @@ describe("POST /api/generate", () => {
 
     expect(response.status).toBe(400);
     await expect(response.json()).resolves.toEqual({
-      error: "视频时长需为 2 到 30 秒之间的整数。",
+      code: "api.durationInvalid",
+      params: { min: 2, max: 30 },
     });
   });
 
@@ -173,8 +162,6 @@ describe("POST /api/generate", () => {
     );
 
     expect(response.status).toBe(400);
-    await expect(response.json()).resolves.toEqual({
-      error: "请选择支持的分辨率。",
-    });
+    await expect(response.json()).resolves.toEqual({ code: "api.resolutionInvalid" });
   });
 });

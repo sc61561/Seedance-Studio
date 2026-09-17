@@ -1,0 +1,124 @@
+import {
+  clearActiveVideoTask,
+  persistActiveVideoTask,
+  readActiveVideoTask,
+  type ActiveTaskStorage,
+  type PersistedVideoTask,
+} from "@/lib/video/task-storage";
+
+export type RecoveredVideoTask = {
+  taskId: string;
+  status: "queued" | "processing" | "succeeded" | "failed";
+  videoUrl?: string;
+  errorCode?: string;
+};
+
+export type RecoveryApiErrorBody = {
+  code?: string;
+  params?: Record<string, string | number>;
+  detail?: string;
+};
+
+type TaskFetcher = (
+  input: string,
+  init: { cache: "no-store"; signal?: AbortSignal },
+) => Promise<Response>;
+
+type ActiveTaskRecoveryOptions = {
+  storage?: ActiveTaskStorage;
+  now?: number;
+  online: boolean;
+  signal?: AbortSignal;
+  fetchTask?: TaskFetcher;
+  onRestore: (task: PersistedVideoTask) => void;
+  onTask: (task: RecoveredVideoTask) => void;
+  onSchedule: (taskId: string) => void;
+  onUnauthorized: () => void;
+  onError: (body?: RecoveryApiErrorBody, error?: unknown) => void;
+};
+
+function isRecoveredVideoTask(value: unknown): value is RecoveredVideoTask {
+  if (!value || typeof value !== "object") return false;
+  const task = value as Record<string, unknown>;
+  return typeof task.taskId === "string"
+    && task.taskId.length > 0
+    && (
+      task.status === "queued"
+      || task.status === "processing"
+      || task.status === "succeeded"
+      || task.status === "failed"
+    )
+    && (task.videoUrl === undefined || typeof task.videoUrl === "string")
+    && (task.errorCode === undefined || typeof task.errorCode === "string");
+}
+
+export async function recoverActiveVideoTask({
+  storage,
+  now = Date.now(),
+  online,
+  signal,
+  fetchTask = fetch,
+  onRestore,
+  onTask,
+  onSchedule,
+  onUnauthorized,
+  onError,
+}: ActiveTaskRecoveryOptions): Promise<boolean> {
+  const storedTask = readActiveVideoTask(storage, now);
+  if (!storedTask) return false;
+
+  onRestore(storedTask);
+  if (!online) {
+    onSchedule(storedTask.taskId);
+    return true;
+  }
+
+  try {
+    const response = await fetchTask(
+      `/api/task/${encodeURIComponent(storedTask.taskId)}`,
+      { cache: "no-store", signal },
+    );
+    if (signal?.aborted) return true;
+    if (response.status === 401) {
+      clearActiveVideoTask(storage);
+      onUnauthorized();
+      return true;
+    }
+
+    const payload: unknown = await response.json();
+    if (signal?.aborted) return true;
+    if (!response.ok) {
+      clearActiveVideoTask(storage);
+      onError(payload as RecoveryApiErrorBody);
+      return true;
+    }
+    if (!isRecoveredVideoTask(payload)) {
+      clearActiveVideoTask(storage);
+      onError();
+      return true;
+    }
+
+    onTask(payload);
+    if (payload.status === "queued" || payload.status === "processing") {
+      persistActiveVideoTask({
+        taskId: payload.taskId,
+        status: payload.status,
+        createdAt: storedTask.createdAt,
+        model: storedTask.model,
+        resolution: storedTask.resolution,
+        aspectRatio: storedTask.aspectRatio,
+        duration: storedTask.duration,
+      }, storage);
+      onSchedule(storedTask.taskId);
+      return true;
+    }
+
+    clearActiveVideoTask(storage);
+    return true;
+  } catch (error) {
+    if (signal?.aborted) return true;
+    clearActiveVideoTask(storage);
+    onError(undefined, error);
+    return true;
+  }
+}

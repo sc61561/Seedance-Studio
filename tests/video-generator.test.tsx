@@ -5,6 +5,7 @@ import {
   NetworkStatusBanner,
   ReferenceImageControls,
   TaskRecoveryNotice,
+  VideoSuccessResult,
   VideoGenerator,
 } from "@/components/studio/video-generator";
 import { I18nProvider } from "@/lib/i18n/context";
@@ -103,6 +104,17 @@ describe("VideoGenerator", () => {
     expect(inactiveMarkup).toBe("");
     expect(activeMarkup).toContain('role="status"');
     expect(activeMarkup).toContain("已恢复上次的视频任务，正在继续查询进度");
+  });
+
+  it("恢复成功后将任务返回的视频地址渲染到播放和打开入口", () => {
+    const markup = renderToStaticMarkup(
+      <I18nProvider>
+        <VideoSuccessResult videoUrl="https://cdn.example.com/recovered.mp4" />
+      </I18nProvider>,
+    );
+
+    expect(markup).toContain('src="https://cdn.example.com/recovered.mp4"');
+    expect(markup).toContain('href="https://cdn.example.com/recovered.mp4"');
   });
 
   it("提供中英双语切换入口", () => {

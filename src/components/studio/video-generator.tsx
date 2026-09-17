@@ -53,10 +53,14 @@ import {
 import {
   clearActiveVideoTask,
   persistActiveVideoTask,
-  restoreActiveVideoTask,
   type PersistedVideoTask,
   type PersistedVideoTaskStatus,
 } from "@/lib/video/task-storage";
+import {
+  recoverActiveVideoTask,
+  type RecoveredVideoTask,
+  type RecoveryApiErrorBody,
+} from "@/lib/video/task-recovery";
 import { useI18n } from "@/lib/i18n/context";
 import type { AuthGateState } from "@/lib/auth/types";
 import { LanguageSwitcher } from "@/components/studio/language-switcher";
@@ -434,31 +438,73 @@ export function VideoGenerator({
     }, 5_000);
   }
 
-  const resumeStoredTask = useEffectEvent((storedTask: PersistedVideoTask) => {
-    activeTaskCreatedAtRef.current = storedTask.createdAt;
-    if (storedTask.resolution && (resolutionOptions as readonly string[]).includes(storedTask.resolution)) {
-      setResolution(storedTask.resolution as (typeof resolutionOptions)[number]);
+  const recoverStoredTask = useEffectEvent(async () => {
+    const controller = new AbortController();
+    pollAbortRef.current = controller;
+
+    try {
+      await recoverActiveVideoTask({
+        signal: controller.signal,
+        online: typeof navigator === "undefined" || navigator.onLine,
+        onRestore: (storedTask: PersistedVideoTask) => {
+          if (!isMountedRef.current || controller.signal.aborted) return;
+          activeTaskCreatedAtRef.current = storedTask.createdAt;
+          if (storedTask.resolution && (resolutionOptions as readonly string[]).includes(storedTask.resolution)) {
+            setResolution(storedTask.resolution as (typeof resolutionOptions)[number]);
+          }
+          if (storedTask.aspectRatio && (aspectRatioOptions as readonly string[]).includes(storedTask.aspectRatio)) {
+            setAspectRatio(storedTask.aspectRatio as (typeof aspectRatioOptions)[number]);
+          }
+          if (
+            storedTask.duration !== undefined
+            && storedTask.duration >= minDuration
+            && storedTask.duration <= maxDuration
+          ) {
+            setDuration(storedTask.duration);
+          }
+          setTask({ taskId: storedTask.taskId, status: storedTask.status });
+          setRestoredTask(true);
+        },
+        onTask: (recoveredTask: RecoveredVideoTask) => {
+          if (!isMountedRef.current || controller.signal.aborted) return;
+          setTask({
+            taskId: recoveredTask.taskId,
+            status: recoveredTask.status,
+            videoUrl: recoveredTask.videoUrl,
+            error: recoveredTask.errorCode ? t(recoveredTask.errorCode) : undefined,
+          });
+          if (recoveredTask.status === "succeeded" || recoveredTask.status === "failed") {
+            activeTaskCreatedAtRef.current = undefined;
+            setRestoredTask(false);
+          }
+        },
+        onSchedule: (taskId) => {
+          if (isMountedRef.current && !controller.signal.aborted) scheduleTaskPoll(taskId);
+        },
+        onUnauthorized: () => {
+          if (isMountedRef.current && !controller.signal.aborted) handleUnauthorized();
+        },
+        onError: (body?: RecoveryApiErrorBody, error?: unknown) => {
+          if (!isMountedRef.current || controller.signal.aborted) return;
+          activeTaskCreatedAtRef.current = undefined;
+          setRestoredTask(false);
+          setTask({
+            taskId: "",
+            status: "failed",
+            error: error instanceof Error ? error.message : localizeApiError(body, "api.queryFailed"),
+          });
+        },
+      });
+    } finally {
+      if (pollAbortRef.current === controller) pollAbortRef.current = null;
     }
-    if (storedTask.aspectRatio && (aspectRatioOptions as readonly string[]).includes(storedTask.aspectRatio)) {
-      setAspectRatio(storedTask.aspectRatio as (typeof aspectRatioOptions)[number]);
-    }
-    if (
-      storedTask.duration !== undefined
-      && storedTask.duration >= minDuration
-      && storedTask.duration <= maxDuration
-    ) {
-      setDuration(storedTask.duration);
-    }
-    setTask({ taskId: storedTask.taskId, status: storedTask.status });
-    setRestoredTask(true);
-    void pollTask(storedTask.taskId);
   });
 
   useEffect(() => {
     if (authState === "unauthenticated" || authState === "unconfigured") return;
 
     stopPolling();
-    restoreActiveVideoTask(resumeStoredTask);
+    void recoverStoredTask();
   }, [authState]);
 
   if (authState === "unauthenticated" || authState === "unconfigured") {
@@ -685,17 +731,7 @@ export function VideoGenerator({
 
             <div className="p-4 sm:p-6">
               {task.status === "succeeded" && task.videoUrl ? (
-                <div className="space-y-4">
-                  <div className="studio-video-frame">
-                    <video className="aspect-video w-full object-contain" controls src={task.videoUrl}>
-                      {t("result.videoUnsupported")}
-                    </video>
-                  </div>
-                  <div className="flex items-center justify-between gap-3">
-                    <p className="flex items-center gap-2 text-xs text-[var(--text-2)]"><Check className="size-3.5" /> {t("result.ready")}</p>
-                    <a className="studio-download-button" href={task.videoUrl} target="_blank" rel="noreferrer" download><Download className="size-3.5" /> {t("result.download")}</a>
-                  </div>
-                </div>
+                <VideoSuccessResult videoUrl={task.videoUrl} />
               ) : (
                 <div className={`studio-empty-state ${isGenerating ? "is-active" : ""} ${task.status === "failed" ? "is-error" : ""}`}>
                   <div className="studio-empty-icon" aria-hidden="true">
@@ -753,6 +789,24 @@ export function TaskRecoveryNotice({ restored }: { restored: boolean }) {
     <div className="studio-network-status mb-6 flex items-center gap-2" role="status">
       <LoaderCircle className="size-4 shrink-0 animate-spin" aria-hidden="true" />
       <span>{t("task.restored")}</span>
+    </div>
+  );
+}
+
+export function VideoSuccessResult({ videoUrl }: { videoUrl: string }) {
+  const { t } = useI18n();
+
+  return (
+    <div className="space-y-4">
+      <div className="studio-video-frame">
+        <video className="aspect-video w-full object-contain" controls src={videoUrl}>
+          {t("result.videoUnsupported")}
+        </video>
+      </div>
+      <div className="flex items-center justify-between gap-3">
+        <p className="flex items-center gap-2 text-xs text-[var(--text-2)]"><Check className="size-3.5" /> {t("result.ready")}</p>
+        <a className="studio-download-button" href={videoUrl} target="_blank" rel="noreferrer" download><Download className="size-3.5" /> {t("result.download")}</a>
+      </div>
     </div>
   );
 }

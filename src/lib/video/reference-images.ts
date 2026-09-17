@@ -35,3 +35,18 @@ export function reorderReferenceImages(
   reordered.splice(targetIndex, 0, source);
   return reordered;
 }
+
+export function moveReferenceImage(
+  images: ReferenceImage[],
+  sourceId: string,
+  offset: -1 | 1,
+): ReferenceImage[] {
+  const sourceIndex = images.findIndex((image) => image.id === sourceId);
+  const targetIndex = sourceIndex + offset;
+
+  if (sourceIndex < 0 || targetIndex < 0 || targetIndex >= images.length) {
+    return images;
+  }
+
+  return reorderReferenceImages(images, sourceId, images[targetIndex].id);
+}

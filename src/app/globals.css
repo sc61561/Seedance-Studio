@@ -165,14 +165,23 @@
 
 @layer components {
   :root {
-    --app-safe-area-top: max(56px, env(safe-area-inset-top, 0px));
-    --app-safe-area-bottom: max(34px, env(safe-area-inset-bottom, 0px));
+    --safe-top: env(safe-area-inset-top, 0px);
+    --safe-right: env(safe-area-inset-right, 0px);
+    --safe-bottom: env(safe-area-inset-bottom, 0px);
+    --safe-left: env(safe-area-inset-left, 0px);
   }
 
   .app-shell {
+    min-height: 100vh;
     min-height: 100dvh;
-    padding-top: var(--app-safe-area-top);
-    padding-bottom: var(--app-safe-area-bottom);
+    padding-top: max(1.25rem, var(--safe-top));
+    padding-right: max(1rem, var(--safe-right));
+    padding-bottom: max(1.25rem, var(--safe-bottom));
+    padding-left: max(1rem, var(--safe-left));
+  }
+
+  .app-shell.has-mobile-action {
+    padding-bottom: calc(6.5rem + var(--safe-bottom));
   }
 
   .studio-shell {
@@ -214,6 +223,15 @@
 
   .studio-topbar {
     border-bottom: 1px solid var(--line);
+  }
+
+  .studio-network-status {
+    border: 1px solid var(--danger);
+    padding: 0.75rem 0.875rem;
+    background: rgb(142 47 34 / 0.06);
+    color: var(--danger);
+    font-size: 0.78rem;
+    line-height: 1.4;
   }
 
   .studio-mark {
@@ -336,8 +354,10 @@
   .studio-textarea:focus,
   .studio-select:focus,
   .studio-upload:focus-within,
+  .studio-details > button:focus-visible,
   .studio-submit:focus-visible,
   .studio-icon-button:focus-visible,
+  .studio-reference-move-button:focus-visible,
   .studio-download-button:focus-visible {
     border-color: var(--text);
     box-shadow: 0 0 0 3px var(--ring);
@@ -395,14 +415,6 @@
     font-size: 0.74rem;
   }
 
-  .studio-details summary::-webkit-details-marker {
-    display: none;
-  }
-
-  .studio-details[open] summary > svg:last-child {
-    transform: rotate(180deg);
-  }
-
   .studio-upload {
     display: block;
     cursor: pointer;
@@ -417,6 +429,11 @@
   .studio-upload:hover {
     border-color: var(--text);
     background: rgb(243 243 239 / 0.42);
+  }
+
+  .studio-upload[aria-disabled="true"] {
+    cursor: not-allowed;
+    opacity: 0.52;
   }
 
   .studio-upload-icon {
@@ -458,6 +475,52 @@
   .studio-icon-button:hover {
     border-color: var(--text);
     color: #111111;
+  }
+
+  .studio-reference-delete {
+    width: 2.5rem;
+    height: 2.5rem;
+  }
+
+  .studio-reference-move-controls {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+
+  .studio-reference-move-button {
+    display: inline-flex;
+    min-width: 2.5rem;
+    min-height: 2.5rem;
+    flex: 1;
+    align-items: center;
+    justify-content: center;
+    color: var(--text-2);
+  }
+
+  .studio-reference-move-button + .studio-reference-move-button {
+    border-left: 1px solid var(--line);
+  }
+
+  .studio-reference-move-button:disabled {
+    cursor: not-allowed;
+    color: var(--text-3);
+    opacity: 0.38;
+  }
+
+  .studio-mobile-submit-bar {
+    position: fixed;
+    z-index: 40;
+    right: 0;
+    bottom: 0;
+    left: 0;
+    padding-top: 0.75rem;
+    padding-right: max(1rem, var(--safe-right));
+    padding-bottom: calc(0.75rem + var(--safe-bottom));
+    padding-left: max(1rem, var(--safe-left));
+    background: rgb(210 210 208 / 0.94);
+    -webkit-backdrop-filter: blur(10px);
+    backdrop-filter: blur(10px);
   }
 
   .studio-submit {
@@ -609,8 +672,39 @@
   }
 
   @media (min-width: 640px) {
+    .app-shell {
+      padding-top: max(2rem, var(--safe-top));
+      padding-right: max(1.5rem, var(--safe-right));
+      padding-bottom: max(2rem, var(--safe-bottom));
+      padding-left: max(1.5rem, var(--safe-left));
+    }
+
+    .app-shell.has-mobile-action {
+      padding-bottom: max(2rem, var(--safe-bottom));
+    }
+
     .studio-form-section {
       padding: 1.75rem 1.75rem;
+    }
+
+    .studio-reference-delete {
+      width: 1.8rem;
+      height: 1.8rem;
+    }
+
+    .studio-mobile-submit-bar {
+      position: static;
+      padding: 1.5rem 1.75rem;
+      background: transparent;
+      -webkit-backdrop-filter: none;
+      backdrop-filter: none;
+    }
+  }
+
+  @media (min-width: 1024px) {
+    .app-shell {
+      padding-right: max(2.5rem, var(--safe-right));
+      padding-left: max(2.5rem, var(--safe-left));
     }
   }
 

@@ -1,7 +1,11 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 
-import { VideoGenerator } from "@/components/studio/video-generator";
+import {
+  NetworkStatusBanner,
+  ReferenceImageControls,
+  VideoGenerator,
+} from "@/components/studio/video-generator";
 import { I18nProvider } from "@/lib/i18n/context";
 
 describe("VideoGenerator", () => {
@@ -29,12 +33,62 @@ describe("VideoGenerator", () => {
     expect(markup).toContain("生成模式");
     expect(markup).toContain("连续关键帧");
     expect(markup).toContain("高级设置");
+    expect(markup).toContain('aria-expanded="false"');
+    expect(markup).toContain('class="studio-advanced-content mt-4 grid gap-4 sm:grid-cols-3" hidden=""');
     expect(markup).toContain("镜头");
     expect(markup).toContain("运动幅度");
     expect(markup).toContain("一致性");
     expect(markup).toContain("AI VIDEO GENERATOR");
     expect(markup).toContain("结果预览区");
+    expect(markup).toContain("studio-mobile-submit-bar");
+    expect(markup).toContain("has-mobile-action");
     expect(markup).toMatch(/<button[^>]*disabled/);
+  });
+
+  it("为触屏参考图提供有边界状态的移动和删除控件", () => {
+    const firstMarkup = renderToStaticMarkup(
+      <I18nProvider>
+        <ReferenceImageControls
+          imageName="one.png"
+          index={0}
+          total={2}
+          disabled={false}
+          onMove={() => undefined}
+          onRemove={() => undefined}
+        />
+      </I18nProvider>,
+    );
+    const lastMarkup = renderToStaticMarkup(
+      <I18nProvider>
+        <ReferenceImageControls
+          imageName="two.png"
+          index={1}
+          total={2}
+          disabled={false}
+          onMove={() => undefined}
+          onRemove={() => undefined}
+        />
+      </I18nProvider>,
+    );
+
+    expect(firstMarkup).toMatch(/aria-label="向左移动 one\.png"[^>]*disabled/);
+    expect(firstMarkup).toMatch(/aria-label="向右移动 one\.png"/);
+    expect(firstMarkup).toMatch(/aria-label="删除 one\.png"/);
+    expect(firstMarkup).toContain("studio-reference-delete");
+    expect(lastMarkup).toMatch(/aria-label="向右移动 two\.png"[^>]*disabled/);
+  });
+
+  it("仅在离线时显示安静的网络状态提示", () => {
+    const onlineMarkup = renderToStaticMarkup(
+      <I18nProvider><NetworkStatusBanner isOnline /></I18nProvider>,
+    );
+    const offlineMarkup = renderToStaticMarkup(
+      <I18nProvider><NetworkStatusBanner isOnline={false} /></I18nProvider>,
+    );
+
+    expect(onlineMarkup).toBe("");
+    expect(offlineMarkup).toContain('role="status"');
+    expect(offlineMarkup).toContain("当前离线，视频生成需要网络连接");
   });
 
   it("提供中英双语切换入口", () => {

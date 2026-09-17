@@ -1,20 +1,45 @@
 import { describe, expect, it } from "vitest";
 
-import { buildReferenceImagePayload, reorderReferenceImages } from "@/lib/video/reference-images";
+import {
+  buildReferenceImagePayload,
+  moveReferenceImage,
+  reorderReferenceImages,
+} from "@/lib/video/reference-images";
+
+const images = [
+  { id: "one", name: "f001.webp", dataUrl: "data:image/webp;base64,one", previewUrl: "blob:one", uploadStatus: "local" as const },
+  { id: "two", name: "f003.webp", dataUrl: "data:image/webp;base64,two", previewUrl: "blob:two", uploadStatus: "local" as const },
+  { id: "three", name: "f005.webp", dataUrl: "data:image/webp;base64,three", previewUrl: "blob:three", uploadStatus: "local" as const },
+];
 
 describe("reorderReferenceImages", () => {
   it("按拖拽后的顺序重排参考图", () => {
-    const images = [
-      { id: "one", name: "f001.webp", dataUrl: "data:image/webp;base64,one", previewUrl: "blob:one", uploadStatus: "local" as const },
-      { id: "two", name: "f003.webp", dataUrl: "data:image/webp;base64,two", previewUrl: "blob:two", uploadStatus: "local" as const },
-      { id: "three", name: "f005.webp", dataUrl: "data:image/webp;base64,three", previewUrl: "blob:three", uploadStatus: "local" as const },
-    ];
-
     expect(reorderReferenceImages(images, "three", "one").map((image) => image.name)).toEqual([
       "f005.webp",
       "f001.webp",
       "f003.webp",
     ]);
+  });
+});
+
+describe("moveReferenceImage", () => {
+  it("按一个位置向左或向右移动参考图", () => {
+    expect(moveReferenceImage(images, "two", -1).map((image) => image.id)).toEqual([
+      "two",
+      "one",
+      "three",
+    ]);
+    expect(moveReferenceImage(images, "two", 1).map((image) => image.id)).toEqual([
+      "one",
+      "three",
+      "two",
+    ]);
+  });
+
+  it("在列表边界或图片不存在时保持原数组不变", () => {
+    expect(moveReferenceImage(images, "one", -1)).toBe(images);
+    expect(moveReferenceImage(images, "three", 1)).toBe(images);
+    expect(moveReferenceImage(images, "missing", 1)).toBe(images);
   });
 });
 

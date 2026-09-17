@@ -1,8 +1,10 @@
 "use client";
 
 import type { DragEvent, FormEvent } from "react";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import {
+  ArrowLeft,
+  ArrowRight,
   ArrowUpRight,
   Check,
   ChevronDown,
@@ -21,6 +23,7 @@ import {
   Sparkles,
   Trash2,
   Upload,
+  WifiOff,
   X,
 } from "lucide-react";
 
@@ -35,6 +38,7 @@ import {
 } from "@/lib/video/prompt-compiler";
 import {
   buildReferenceImagePayload,
+  moveReferenceImage,
   reorderReferenceImages,
   type ReferenceImage,
 } from "@/lib/video/reference-images";
@@ -58,6 +62,32 @@ type ApiErrorBody = { code?: string; params?: Record<string, string | number>; d
 const maxImageBytes = 8 * 1024 * 1024;
 const maxReferenceImages = 10;
 const acceptedImageTypes = new Set(["image/jpeg", "image/png", "image/webp"]);
+const desktopMediaQuery = "(min-width: 640px)";
+
+function subscribeToOnlineStatus(onStoreChange: () => void): () => void {
+  if (typeof window === "undefined") return () => undefined;
+  window.addEventListener("online", onStoreChange);
+  window.addEventListener("offline", onStoreChange);
+  return () => {
+    window.removeEventListener("online", onStoreChange);
+    window.removeEventListener("offline", onStoreChange);
+  };
+}
+
+function getOnlineSnapshot(): boolean {
+  return typeof navigator === "undefined" ? true : navigator.onLine;
+}
+
+function subscribeToDesktopViewport(onStoreChange: () => void): () => void {
+  if (typeof window === "undefined" || !window.matchMedia) return () => undefined;
+  const query = window.matchMedia(desktopMediaQuery);
+  query.addEventListener("change", onStoreChange);
+  return () => query.removeEventListener("change", onStoreChange);
+}
+
+function getDesktopSnapshot(): boolean {
+  return typeof window !== "undefined" && Boolean(window.matchMedia?.(desktopMediaQuery).matches);
+}
 
 export function VideoGenerator({
   initialAuthState = "disabled",
@@ -89,6 +119,10 @@ export function VideoGenerator({
   const [authPassword, setAuthPassword] = useState("");
   const [authError, setAuthError] = useState<string>();
   const [authPending, setAuthPending] = useState(false);
+  const [advancedOpenPreference, setAdvancedOpenPreference] = useState<boolean | null>(null);
+  const isOnline = useSyncExternalStore(subscribeToOnlineStatus, getOnlineSnapshot, () => true);
+  const isDesktop = useSyncExternalStore(subscribeToDesktopViewport, getDesktopSnapshot, () => false);
+  const advancedOpen = advancedOpenPreference ?? isDesktop;
   const pollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pollAbortRef = useRef<AbortController | null>(null);
   const submitAbortRef = useRef<AbortController | null>(null);
@@ -237,9 +271,14 @@ export function VideoGenerator({
     setDraggedImageId(undefined);
   }
 
+  function moveReferenceImageBy(id: string, offset: -1 | 1) {
+    setReferenceImages((images) => moveReferenceImage(images, id, offset));
+    setTask({ taskId: "", status: "idle" });
+  }
+
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (isGenerating || !prompt.trim()) return;
+    if (isGenerating || !isOnline || !prompt.trim()) return;
     stopPolling();
     setTask({ taskId: "", status: "submitting" });
     const controller = new AbortController();
@@ -305,6 +344,12 @@ export function VideoGenerator({
 
   async function pollTask(taskId: string) {
     if (!isMountedRef.current) return;
+    if (typeof navigator !== "undefined" && !navigator.onLine) {
+      pollTimerRef.current = setTimeout(() => {
+        if (isMountedRef.current) void pollTask(taskId);
+      }, 5_000);
+      return;
+    }
     const controller = new AbortController();
     pollAbortRef.current = controller;
     try {
@@ -339,6 +384,12 @@ export function VideoGenerator({
       }, 5_000);
     } catch (error) {
       if (!isMountedRef.current || controller.signal.aborted) return;
+      if (typeof navigator !== "undefined" && !navigator.onLine) {
+        pollTimerRef.current = setTimeout(() => {
+          if (isMountedRef.current) void pollTask(taskId);
+        }, 5_000);
+        return;
+      }
       setTask({
         taskId,
         status: "failed",
@@ -351,7 +402,7 @@ export function VideoGenerator({
   }
 
   return (
-    <main className="studio-shell app-shell px-4 py-5 text-[var(--text)] sm:px-6 sm:py-8 lg:px-10">
+    <main className="studio-shell app-shell has-mobile-action text-[var(--text)]">
       <div className="mx-auto w-full max-w-[1320px]">
         <header className="studio-topbar mb-9 flex items-center justify-between gap-4 pb-5 sm:mb-12">
           <div className="flex items-center gap-3">
@@ -382,6 +433,8 @@ export function VideoGenerator({
             )}
           </div>
         </header>
+
+        <NetworkStatusBanner isOnline={isOnline} />
 
         <div className="mb-9 max-w-3xl sm:mb-11">
           <p className="studio-eyebrow mb-3">{t("hero.eyebrow")}</p>
@@ -465,17 +518,23 @@ export function VideoGenerator({
                   <SelectField label={t("field.generationMode")} value={generationMode} onChange={(value) => setGenerationMode(value as GenerationMode)} disabled={isGenerating} options={[["reference", t("mode.reference")], ["keyframes", t("mode.keyframes")], ["first-last", t("mode.first-last")]]} />
                 </div>
 
-                <details className="studio-details mt-5" open>
-                  <summary className="flex cursor-pointer list-none items-center justify-between gap-4">
+                <div className="studio-details mt-5">
+                  <button
+                    className="flex w-full cursor-pointer items-center justify-between gap-4 text-left"
+                    type="button"
+                    aria-expanded={advancedOpen}
+                    aria-controls="advanced-settings"
+                    onClick={() => setAdvancedOpenPreference(!advancedOpen)}
+                  >
                     <span className="flex items-center gap-2"><SlidersHorizontal className="size-3.5 text-[var(--text-3)]" /> {t("advanced.toggle")}</span>
-                    <ChevronDown className="size-4 text-[var(--text-3)] transition-transform" />
-                  </summary>
-                  <div className="mt-4 grid gap-4 sm:grid-cols-3">
+                    <ChevronDown className={`size-4 text-[var(--text-3)] transition-transform ${advancedOpen ? "rotate-180" : ""}`} />
+                  </button>
+                  <div className="studio-advanced-content mt-4 grid gap-4 sm:grid-cols-3" hidden={!advancedOpen} id="advanced-settings">
                     <SelectField label={t("field.camera")} value={cameraMode} onChange={(value) => setCameraMode(value as CameraMode)} disabled={isGenerating} options={[["auto", t("camera.auto")], ["locked", t("camera.locked")], ["push-in", t("camera.push-in")], ["pull-back", t("camera.pull-back")]]} />
                     <SelectField label={t("field.motion")} value={motionLevel} onChange={(value) => setMotionLevel(value as MotionLevel)} disabled={isGenerating} options={[["auto", t("motion.auto")], ["low", t("motion.low")], ["medium", t("motion.medium")], ["high", t("motion.high")]]} />
                     <SelectField label={t("field.consistency")} value={consistencyLevel} onChange={(value) => setConsistencyLevel(value as ConsistencyLevel)} disabled={isGenerating} options={[["normal", t("consistency.normal")], ["high", t("consistency.high")], ["very-high", t("consistency.very-high")]]} />
                   </div>
-                </details>
+                </div>
               </div>
 
               <div className="studio-form-section border-t border-[var(--line)]">
@@ -484,7 +543,7 @@ export function VideoGenerator({
                   <span className="studio-index">{referenceImages.length}/{maxReferenceImages}</span>
                 </div>
 
-                <label className="studio-upload group block" htmlFor="reference-images">
+                <label className="studio-upload group block" htmlFor="reference-images" aria-disabled={isGenerating || !isOnline}>
                   <input
                     id="reference-images"
                     className="sr-only"
@@ -492,7 +551,7 @@ export function VideoGenerator({
                     accept="image/png,image/jpeg,image/webp"
                     multiple
                     onChange={(event) => void handleReferenceImageChange(event.target.files)}
-                    disabled={isGenerating}
+                    disabled={isGenerating || !isOnline}
                   />
                   <span className="studio-upload-icon"><ImagePlus className="size-5" strokeWidth={1.6} /></span>
                   <span className="mt-3 block text-sm font-medium text-[var(--text)]">{t("ref.addTitle")}</span>
@@ -520,15 +579,22 @@ export function VideoGenerator({
                           <span className="flex min-w-0 items-center gap-1.5 text-[11px] text-[var(--text-2)]"><GripVertical className="size-3 shrink-0 text-[var(--text-3)]" /> {String(index + 1).padStart(2, "0")}</span>
                           <span className="min-w-0 truncate text-[11px] text-[var(--text-3)]" title={image.name}>{image.name}</span>
                         </div>
-                        <button className="studio-icon-button absolute right-2 top-2 opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100" type="button" onClick={() => removeReferenceImage(image.id)} disabled={isGenerating} aria-label={t("ref.delete", { name: image.name })} title={t("ref.deleteTitle")}><Trash2 className="size-3.5" /></button>
+                        <ReferenceImageControls
+                          imageName={image.name}
+                          index={index}
+                          total={referenceImages.length}
+                          disabled={isGenerating}
+                          onMove={(offset) => moveReferenceImageBy(image.id, offset)}
+                          onRemove={() => removeReferenceImage(image.id)}
+                        />
                       </li>
                     ))}
                   </ol>
                 )}
               </div>
 
-              <div className="border-t border-[var(--line)] p-5 sm:px-7 sm:py-6">
-                <button className="studio-submit group flex w-full items-center justify-center gap-2" type="submit" disabled={!prompt.trim() || isGenerating}>
+              <div className="studio-mobile-submit-bar border-t border-[var(--line)]">
+                <button className="studio-submit group mx-auto flex w-full max-w-[660px] items-center justify-center gap-2" type="submit" disabled={!prompt.trim() || isGenerating || !isOnline}>
                   {isGenerating ? <LoaderCircle className="size-4 animate-spin" /> : <Sparkles className="size-4" />}
                   <span>{isGenerating ? t("submit.generating") : t("submit.generate")}</span>
                   {!isGenerating && <ArrowUpRight className="size-4 transition-transform group-hover:-translate-y-0.5 group-hover:translate-x-0.5" />}
@@ -593,6 +659,75 @@ export function VideoGenerator({
   );
 }
 
+export function NetworkStatusBanner({ isOnline }: { isOnline: boolean }) {
+  const { t } = useI18n();
+  if (isOnline) return null;
+
+  return (
+    <div className="studio-network-status mb-6 flex items-center gap-2" role="status">
+      <WifiOff className="size-4 shrink-0" aria-hidden="true" />
+      <span>{t("network.offline")}</span>
+    </div>
+  );
+}
+
+type ReferenceImageControlsProps = {
+  imageName: string;
+  index: number;
+  total: number;
+  disabled: boolean;
+  onMove: (offset: -1 | 1) => void;
+  onRemove: () => void;
+};
+
+export function ReferenceImageControls({
+  imageName,
+  index,
+  total,
+  disabled,
+  onMove,
+  onRemove,
+}: ReferenceImageControlsProps) {
+  const { t } = useI18n();
+
+  return (
+    <>
+      <button
+        className="studio-icon-button studio-reference-delete absolute right-2 top-2 opacity-100 transition-opacity sm:opacity-0 sm:group-hover:opacity-100 sm:focus-visible:opacity-100"
+        type="button"
+        onClick={onRemove}
+        aria-label={t("ref.delete", { name: imageName })}
+        title={t("ref.deleteTitle")}
+        disabled={disabled}
+      >
+        <Trash2 className="size-3.5" />
+      </button>
+      <div className="studio-reference-move-controls border-t border-[var(--line)] sm:hidden">
+        <button
+          className="studio-reference-move-button"
+          type="button"
+          onClick={() => onMove(-1)}
+          aria-label={t("ref.moveLeft", { name: imageName })}
+          title={t("ref.moveLeft", { name: imageName })}
+          disabled={disabled || index === 0}
+        >
+          <ArrowLeft className="size-4" />
+        </button>
+        <button
+          className="studio-reference-move-button"
+          type="button"
+          onClick={() => onMove(1)}
+          aria-label={t("ref.moveRight", { name: imageName })}
+          title={t("ref.moveRight", { name: imageName })}
+          disabled={disabled || index === total - 1}
+        >
+          <ArrowRight className="size-4" />
+        </button>
+      </div>
+    </>
+  );
+}
+
 type AuthGateProps = {
   state: Extract<AuthGateState, "unauthenticated" | "unconfigured">;
   password: string;
@@ -613,7 +748,7 @@ function AuthGate({
   const { t } = useI18n();
 
   return (
-    <main className="studio-shell app-shell px-4 py-5 text-[var(--text)] sm:px-6 sm:py-8 lg:px-10">
+    <main className="studio-shell app-shell text-[var(--text)]">
       <div className="mx-auto w-full max-w-[660px]">
         <header className="studio-topbar mb-9 flex items-center justify-between gap-4 pb-5 sm:mb-12">
           <div className="flex items-center gap-3">

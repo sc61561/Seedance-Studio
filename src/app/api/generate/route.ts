@@ -1,5 +1,7 @@
 import { Buffer } from "node:buffer";
 
+import { requireApiAuth } from "@/lib/auth/guard";
+import { enforceGenerationRateLimit } from "@/lib/security/rate-limit";
 import {
   aspectRatioOptions,
   defaultDuration,
@@ -21,6 +23,9 @@ const maxReferenceImages = 10;
 const imageDataUrlPattern = /^data:image\/(png|jpeg|webp);base64,([A-Za-z0-9+/]+={0,2})$/;
 
 export async function POST(request: Request): Promise<Response> {
+  const authError = requireApiAuth(request);
+  if (authError) return authError;
+
   const payload = await parseRequest(request);
 
   if (!payload) {
@@ -74,6 +79,9 @@ export async function POST(request: Request): Promise<Response> {
   if ("error" in duration) {
     return errorResponse(duration.error.code, duration.error.params);
   }
+
+  const rateLimitError = enforceGenerationRateLimit(request);
+  if (rateLimitError) return rateLimitError;
 
   try {
     const task = await new SeedanceProvider().createTask({

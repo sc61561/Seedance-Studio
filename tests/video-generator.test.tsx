@@ -47,4 +47,27 @@ describe("VideoGenerator", () => {
     expect(markup).toContain("English");
     expect(markup).toContain("简体中文");
   });
+
+  it("认证启用但未登录时只显示访问密码门禁", () => {
+    const markup = renderToStaticMarkup(
+      <I18nProvider>
+        <VideoGenerator initialAuthState="unauthenticated" />
+      </I18nProvider>,
+    );
+
+    expect(markup).toContain("访问密码");
+    expect(markup).toContain('type="password"');
+    expect(markup).not.toContain("请输入你想生成的视频内容");
+  });
+
+  it("生产环境认证未配置时显示明确的服务器配置错误", () => {
+    const markup = renderToStaticMarkup(
+      <I18nProvider>
+        <VideoGenerator initialAuthState="unconfigured" />
+      </I18nProvider>,
+    );
+
+    expect(markup).toContain("访问保护尚未配置");
+    expect(markup).not.toContain('type="password"');
+  });
 });

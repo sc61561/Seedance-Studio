@@ -1,3 +1,4 @@
+import { requireApiAuth } from "@/lib/auth/guard";
 import { apiError } from "@/lib/video/errors";
 import { getStorageProvider } from "@/lib/storage";
 
@@ -7,6 +8,9 @@ const maxImageBytes = 8 * 1024 * 1024;
 const acceptedImageTypes = new Set(["image/png", "image/jpeg", "image/webp"]);
 
 export async function POST(request: Request): Promise<Response> {
+  const authError = requireApiAuth(request);
+  if (authError) return authError;
+
   let formData: FormData;
   try {
     formData = await request.formData();

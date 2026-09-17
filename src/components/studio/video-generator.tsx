@@ -13,6 +13,8 @@ import {
   GripVertical,
   ImagePlus,
   LoaderCircle,
+  LockKeyhole,
+  LogOut,
   Move,
   Play,
   SlidersHorizontal,
@@ -45,6 +47,7 @@ import {
   resolutionOptions,
 } from "@/lib/video/models";
 import { useI18n } from "@/lib/i18n/context";
+import type { AuthGateState } from "@/lib/auth/types";
 import { LanguageSwitcher } from "@/components/studio/language-switcher";
 
 type VideoTaskState = "idle" | "submitting" | "queued" | "processing" | "succeeded" | "failed";
@@ -56,7 +59,11 @@ const maxImageBytes = 8 * 1024 * 1024;
 const maxReferenceImages = 10;
 const acceptedImageTypes = new Set(["image/jpeg", "image/png", "image/webp"]);
 
-export function VideoGenerator() {
+export function VideoGenerator({
+  initialAuthState = "disabled",
+}: {
+  initialAuthState?: AuthGateState;
+}) {
   const { t } = useI18n();
 
   // Localize an API error body ({ code, params, detail }) using the shared dictionary.
@@ -78,6 +85,10 @@ export function VideoGenerator() {
   const [referenceImages, setReferenceImages] = useState<ReferenceImage[]>([]);
   const [draggedImageId, setDraggedImageId] = useState<string>();
   const [task, setTask] = useState<VideoTask>({ taskId: "", status: "idle" });
+  const [authState, setAuthState] = useState<AuthGateState>(initialAuthState);
+  const [authPassword, setAuthPassword] = useState("");
+  const [authError, setAuthError] = useState<string>();
+  const [authPending, setAuthPending] = useState(false);
   const pollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pollAbortRef = useRef<AbortController | null>(null);
   const submitAbortRef = useRef<AbortController | null>(null);
@@ -108,6 +119,64 @@ export function VideoGenerator() {
     };
   }, []);
 
+  async function handleLogin(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (authPending || !authPassword) return;
+
+    setAuthPending(true);
+    setAuthError(undefined);
+    try {
+      const response = await fetch("/api/auth/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ password: authPassword }),
+      });
+      const payload = await response.json() as ApiErrorBody;
+      if (!response.ok) {
+        setAuthError(localizeApiError(payload, "api.unauthorized"));
+        return;
+      }
+
+      setAuthPassword("");
+      setAuthState("authenticated");
+    } catch {
+      setAuthError(t("api.queryFailed"));
+    } finally {
+      setAuthPending(false);
+    }
+  }
+
+  async function handleLogout() {
+    stopPolling();
+    submitAbortRef.current?.abort();
+    setTask({ taskId: "", status: "idle" });
+    try {
+      await fetch("/api/auth/logout", { method: "POST" });
+    } finally {
+      setAuthState("unauthenticated");
+    }
+  }
+
+  function handleUnauthorized() {
+    stopPolling();
+    setTask({ taskId: "", status: "idle" });
+    setAuthState("unauthenticated");
+    setAuthError(t("api.unauthorized"));
+  }
+
+  if (authState === "unauthenticated" || authState === "unconfigured") {
+    return (
+      <AuthGate
+        state={authState}
+        password={authPassword}
+        error={authError}
+        pending={authPending}
+        onPasswordChange={setAuthPassword}
+        onSubmit={handleLogin}
+      />
+    );
+  }
+
   const isGenerating = task.status === "submitting" || task.status === "queued" || task.status === "processing";
   const modeHint = generationMode === "first-last" && referenceImages.length < 2
     ? t("hint.firstLastNeedTwo")
@@ -135,7 +204,9 @@ export function VideoGenerator() {
       return;
     }
     try {
-      const nextImages = await Promise.all(selectedFiles.map((file, index) => createReferenceImage(file, index)));
+      const nextImages = await Promise.all(
+        selectedFiles.map((file, index) => createReferenceImage(file, index, handleUnauthorized)),
+      );
       if (!isMountedRef.current) {
         nextImages.forEach((image) => URL.revokeObjectURL(image.previewUrl));
         return;
@@ -210,6 +281,10 @@ export function VideoGenerator() {
       });
       const payload = (await response.json()) as { taskId?: string } & ApiErrorBody;
       if (!isMountedRef.current || controller.signal.aborted) return;
+      if (response.status === 401) {
+        handleUnauthorized();
+        return;
+      }
       if (!response.ok || !payload.taskId) {
         throw new Error(localizeApiError(payload, "api.createFailed"));
       }
@@ -244,6 +319,10 @@ export function VideoGenerator() {
         errorCode?: string;
       } & ApiErrorBody;
       if (!isMountedRef.current || controller.signal.aborted) return;
+      if (response.status === 401) {
+        handleUnauthorized();
+        return;
+      }
       if (!response.ok) throw new Error(localizeApiError(payload, "api.queryFailed"));
       setTask({
         taskId: payload.taskId,
@@ -290,6 +369,17 @@ export function VideoGenerator() {
               <span>{t("topbar.status")}</span>
             </div>
             <LanguageSwitcher />
+            {authState === "authenticated" && (
+              <button
+                className="studio-icon-button"
+                type="button"
+                onClick={() => void handleLogout()}
+                aria-label={t("auth.logout")}
+                title={t("auth.logout")}
+              >
+                <LogOut className="size-3.5" />
+              </button>
+            )}
           </div>
         </header>
 
@@ -503,6 +593,91 @@ export function VideoGenerator() {
   );
 }
 
+type AuthGateProps = {
+  state: Extract<AuthGateState, "unauthenticated" | "unconfigured">;
+  password: string;
+  error?: string;
+  pending: boolean;
+  onPasswordChange: (value: string) => void;
+  onSubmit: (event: FormEvent<HTMLFormElement>) => void;
+};
+
+function AuthGate({
+  state,
+  password,
+  error,
+  pending,
+  onPasswordChange,
+  onSubmit,
+}: AuthGateProps) {
+  const { t } = useI18n();
+
+  return (
+    <main className="studio-shell app-shell px-4 py-5 text-[var(--text)] sm:px-6 sm:py-8 lg:px-10">
+      <div className="mx-auto w-full max-w-[660px]">
+        <header className="studio-topbar mb-9 flex items-center justify-between gap-4 pb-5 sm:mb-12">
+          <div className="flex items-center gap-3">
+            <div className="studio-mark flex size-9 items-center justify-center" aria-hidden="true">
+              <Clapperboard className="size-4" strokeWidth={1.6} />
+            </div>
+            <div>
+              <p className="text-sm font-medium tracking-tight text-[var(--text)]">Seedance Studio</p>
+              <p className="mt-0.5 text-xs text-[var(--text-3)]">{t("topbar.subtitle")}</p>
+            </div>
+          </div>
+          <LanguageSwitcher />
+        </header>
+
+        <section className="studio-panel overflow-hidden">
+          <div className="studio-form-section text-center">
+            <div className="studio-mark mx-auto flex size-11 items-center justify-center" aria-hidden="true">
+              <LockKeyhole className="size-5" strokeWidth={1.6} />
+            </div>
+            <h1 className="mt-5 text-xl font-medium tracking-tight text-[var(--text)]">
+              {state === "unconfigured" ? t("auth.unconfiguredTitle") : t("auth.title")}
+            </h1>
+            <p className="mx-auto mt-2 max-w-md text-sm leading-6 text-[var(--text-2)]">
+              {state === "unconfigured"
+                ? t("auth.unconfiguredDescription")
+                : t("auth.description")}
+            </p>
+
+            {state === "unauthenticated" && (
+              <form className="mx-auto mt-6 max-w-sm text-left" onSubmit={onSubmit}>
+                <label className="studio-label mb-2 block" htmlFor="access-password">
+                  {t("auth.passwordLabel")}
+                </label>
+                <input
+                  id="access-password"
+                  className="studio-textarea min-h-0 w-full py-3"
+                  type="password"
+                  autoComplete="current-password"
+                  value={password}
+                  onChange={(event) => onPasswordChange(event.target.value)}
+                  placeholder={t("auth.passwordPlaceholder")}
+                  disabled={pending}
+                  required
+                />
+                {error && (
+                  <p className="mt-2 text-xs text-red-600" role="alert">{error}</p>
+                )}
+                <button
+                  className="studio-submit mt-4 flex w-full items-center justify-center gap-2"
+                  type="submit"
+                  disabled={pending || !password}
+                >
+                  {pending && <LoaderCircle className="size-4 animate-spin" />}
+                  {pending ? t("auth.submitting") : t("auth.submit")}
+                </button>
+              </form>
+            )}
+          </div>
+        </section>
+      </div>
+    </main>
+  );
+}
+
 type SelectFieldProps = {
   label: string;
   value: string;
@@ -555,7 +730,11 @@ function createReferenceImageId(index: number): string {
   return `${Date.now()}-${index}-${Math.random().toString(36).slice(2)}`;
 }
 
-async function createReferenceImage(file: File, index: number): Promise<ReferenceImage> {
+async function createReferenceImage(
+  file: File,
+  index: number,
+  onUnauthorized: () => void,
+): Promise<ReferenceImage> {
   const dataUrl = await readFileAsDataUrl(file);
   const image: ReferenceImage = {
     id: createReferenceImageId(index),
@@ -570,6 +749,9 @@ async function createReferenceImage(file: File, index: number): Promise<Referenc
     formData.set("file", file);
     const response = await fetch("/api/upload", { method: "POST", body: formData });
     const payload = await response.json() as { url?: string } & ApiErrorBody;
+    if (response.status === 401) {
+      onUnauthorized();
+    }
     if (response.ok && payload.url) {
       return { ...image, remoteUrl: payload.url, uploadStatus: "uploaded" };
     }

@@ -1,3 +1,4 @@
+import { requireApiAuth } from "@/lib/auth/guard";
 import { apiError } from "@/lib/video/errors";
 import { SeedanceProvider, VideoProviderError } from "@/lib/video/providers/seedance";
 
@@ -9,7 +10,9 @@ export async function GET(
   request: Request,
   context: TaskRouteContext,
 ): Promise<Response> {
-  void request;
+  const authError = requireApiAuth(request);
+  if (authError) return authError;
+
   const { id } = await context.params;
 
   if (!id) {

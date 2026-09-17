@@ -70,12 +70,17 @@ import {
 } from "@/lib/video/task-storage";
 import {
   recoverActiveVideoTask,
-  isTransientTaskPollingStatus,
+  isTransientTaskPollingResponse,
   type RecoveredVideoTask,
   type RecoveryApiErrorBody,
 } from "@/lib/video/task-recovery";
 import { useI18n } from "@/lib/i18n/context";
-import type { AuthGateState } from "@/lib/auth/types";
+import {
+  isSessionUnauthorizedResponse,
+  shouldPreserveActiveTaskOnUnauthorized,
+  type AuthGateState,
+  type UnauthorizedRequestSource,
+} from "@/lib/auth/types";
 import { LanguageSwitcher } from "@/components/studio/language-switcher";
 import { InstallPrompt } from "@/components/pwa/install-prompt";
 
@@ -242,9 +247,9 @@ export function VideoGenerator({
     }
   }
 
-  function handleUnauthorized(preserveActiveTask = false) {
+  function handleUnauthorized(source: UnauthorizedRequestSource) {
     stopPolling();
-    if (!preserveActiveTask) {
+    if (!shouldPreserveActiveTaskOnUnauthorized(source)) {
       clearTrackedActiveTask();
       setTask({ taskId: "", status: "idle" });
     }
@@ -303,7 +308,12 @@ export function VideoGenerator({
     const result = await resolveReferenceImageUpload(file);
     if (!isMountedRef.current) return;
     updateReferenceImages((images) => applyReferenceImageUploadResult(images, id, result));
-    if (result.status === "failed" && result.httpStatus === 401) handleUnauthorized();
+    if (
+      result.status === "failed"
+      && isSessionUnauthorizedResponse(result.httpStatus ?? 0, result.error.code)
+    ) {
+      handleUnauthorized("upload");
+    }
   }
 
   function retryReferenceImage(id: string) {
@@ -387,8 +397,8 @@ export function VideoGenerator({
       });
       const payload = (await response.json()) as { taskId?: string } & ApiErrorBody;
       if (!isMountedRef.current || controller.signal.aborted) return;
-      if (response.status === 401) {
-        handleUnauthorized();
+      if (isSessionUnauthorizedResponse(response.status, payload.code)) {
+        handleUnauthorized("generate");
         return;
       }
       if (!response.ok || !payload.taskId) {
@@ -425,10 +435,6 @@ export function VideoGenerator({
         cache: "no-store",
         signal: controller.signal,
       });
-      if (response.status === 401) {
-        handleUnauthorized(true);
-        return;
-      }
       let payload: ({
         taskId: string;
         status: VideoTaskState;
@@ -438,7 +444,7 @@ export function VideoGenerator({
       try {
         payload = await response.json() as typeof payload;
       } catch {
-        if (isTransientTaskPollingStatus(response.status)) {
+        if (isTransientTaskPollingResponse(response.status)) {
           scheduleTaskPoll(taskId);
           return;
         }
@@ -448,8 +454,15 @@ export function VideoGenerator({
         return;
       }
       if (!isMountedRef.current || controller.signal.aborted) return;
+      if (isSessionUnauthorizedResponse(response.status, payload?.code)) {
+        handleUnauthorized("task");
+        return;
+      }
       if (!response.ok) {
-        if (isTransientTaskPollingStatus(response.status)) {
+        if (isTransientTaskPollingResponse(response.status, payload?.code)) {
+          setTask((currentTask) => currentTask.taskId === taskId
+            ? { ...currentTask, error: localizeApiError(payload, "api.queryFailed") }
+            : currentTask);
           scheduleTaskPoll(taskId);
           return;
         }
@@ -550,11 +563,15 @@ export function VideoGenerator({
           if (isMountedRef.current && !controller.signal.aborted) scheduleTaskPoll(taskId);
         },
         onUnauthorized: () => {
-          if (isMountedRef.current && !controller.signal.aborted) handleUnauthorized(true);
+          if (isMountedRef.current && !controller.signal.aborted) handleUnauthorized("task");
         },
-        onTransientError: () => {
+        onTransientError: (body, error) => {
           if (!isMountedRef.current || controller.signal.aborted) return;
           setRestoredTask(true);
+          setTask((currentTask) => ({
+            ...currentTask,
+            error: error instanceof Error ? t("api.queryFailed") : localizeApiError(body, "api.queryFailed"),
+          }));
         },
         onError: (body?: RecoveryApiErrorBody, error?: unknown) => {
           if (!isMountedRef.current || controller.signal.aborted) return;
@@ -840,7 +857,7 @@ export function VideoGenerator({
                   </p>
                   <p className="mt-2 max-w-xs text-center text-xs leading-5 text-[var(--text-3)]">
                     {task.status === "idle" && t("state.idle.desc")}
-                    {isGenerating && t("state.generating.desc")}
+                    {isGenerating && <GeneratingStateDescription error={task.error} />}
                     {task.status === "failed" && task.error}
                   </p>
                   {task.status === "idle" && (
@@ -873,6 +890,11 @@ export function NetworkStatusBanner({ isOnline }: { isOnline: boolean }) {
       <span>{t("network.offline")}</span>
     </div>
   );
+}
+
+export function GeneratingStateDescription({ error }: { error?: string }) {
+  const { t } = useI18n();
+  return <>{error ?? t("state.generating.desc")}</>;
 }
 
 export function MobileSubmitAction({

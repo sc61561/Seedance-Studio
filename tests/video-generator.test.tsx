@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   NetworkStatusBanner,
+  GeneratingStateDescription,
   MobileSubmitAction,
   ReferenceImageControls,
   TaskRecoveryNotice,
@@ -176,5 +177,16 @@ describe("VideoGenerator", () => {
     expect(successMarkup).toContain("查看结果");
     expect(failedMarkup).toContain('type="submit"');
     expect(failedMarkup).toContain("重新生成");
+  });
+
+  it("轮询遇到上游鉴权错误时把错误显示给用户而不是伪装成本地会话过期", () => {
+    const markup = renderToStaticMarkup(
+      <I18nProvider>
+        <GeneratingStateDescription error="视频服务鉴权失败，请检查服务端 API Key 配置。" />
+      </I18nProvider>,
+    );
+
+    expect(markup).toContain("视频服务鉴权失败，请检查服务端 API Key 配置。");
+    expect(markup).not.toContain("页面会自动更新任务状态");
   });
 });

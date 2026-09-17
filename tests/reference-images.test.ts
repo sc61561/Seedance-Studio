@@ -128,6 +128,22 @@ describe("reference image upload lifecycle", () => {
     )).resolves.toEqual({ status: "failed", error: { code: "api.uploadFailed" }, httpStatus: 502 });
   });
 
+  it("上传会话 401 保持为可重试失败，不转换为本地 Data URL", async () => {
+    const file = new File(["image"], "one.png", { type: "image/png" });
+
+    await expect(resolveReferenceImageUpload(
+      file,
+      async () => Response.json({ code: "api.unauthorized" }, { status: 401 }),
+      async () => {
+        throw new Error("must not read Base64");
+      },
+    )).resolves.toEqual({
+      status: "failed",
+      error: { code: "api.unauthorized" },
+      httpStatus: 401,
+    });
+  });
+
   it("上传中、失败或混合回退状态都会阻止生成", () => {
     const uploaded = {
       id: "uploaded",

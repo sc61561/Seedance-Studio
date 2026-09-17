@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { POST } from "@/app/api/generate/route";
 
@@ -10,6 +10,10 @@ const requestFor = (body: unknown) =>
   });
 
 describe("POST /api/generate", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.unstubAllGlobals();
+  });
   it("拒绝空提示词", async () => {
     const response = await POST(requestFor({ prompt: "   " }));
 
@@ -90,6 +94,24 @@ describe("POST /api/generate", () => {
 
     expect(response.status).toBe(503);
     await expect(response.json()).resolves.toEqual({ code: "api.providerNoKey" });
+  });
+
+  it("保留上游鉴权错误码，供客户端区别于本地会话过期", async () => {
+    vi.stubEnv("SEEDANCE_API_KEY", "test-server-key");
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json({
+      error: { code: "Unauthorized", message: "invalid upstream key" },
+    }, { status: 401 })));
+    const response = await POST(new Request("http://localhost/api/generate", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-forwarded-for": "203.0.113.123",
+      },
+      body: JSON.stringify({ prompt: "生成一段视频" }),
+    }));
+
+    expect(response.status).toBe(401);
+    await expect(response.json()).resolves.toEqual({ code: "api.providerAuthFailed" });
   });
 
   it.each([

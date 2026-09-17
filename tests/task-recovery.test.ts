@@ -199,6 +199,7 @@ describe("active task recovery controller", () => {
 
   it.each([
     ["503 response", async () => Response.json({ code: "api.providerBusy" }, { status: 503 })],
+    ["401 upstream provider auth response", async () => Response.json({ code: "api.providerAuthFailed" }, { status: 401 })],
     ["403 provider auth response", async () => Response.json({ code: "api.providerAuthFailed" }, { status: 403 })],
     ["malformed response", async () => Response.json({ unexpected: true })],
     ["invalid JSON response", async () => new Response("not-json", { status: 200 })],

@@ -1,15 +1,21 @@
 import { requireApiAuth } from "@/lib/auth/guard";
 import { apiError } from "@/lib/video/errors";
 import { getStorageProvider } from "@/lib/storage";
+import { enforceUploadRateLimit } from "@/lib/security/rate-limit";
+import {
+  acceptedReferenceImageTypes,
+  hasMatchingReferenceImageExtension,
+  maxReferenceImageBytes,
+} from "@/lib/video/reference-image-limits";
 
 export const runtime = "nodejs";
-
-const maxImageBytes = 8 * 1024 * 1024;
-const acceptedImageTypes = new Set(["image/png", "image/jpeg", "image/webp"]);
 
 export async function POST(request: Request): Promise<Response> {
   const authError = requireApiAuth(request);
   if (authError) return authError;
+
+  const rateLimitError = enforceUploadRateLimit(request);
+  if (rateLimitError) return rateLimitError;
 
   let formData: FormData;
   try {
@@ -23,11 +29,14 @@ export async function POST(request: Request): Promise<Response> {
     return errorResponse("api.uploadFileRequired");
   }
 
-  if (!acceptedImageTypes.has(file.type)) {
+  if (
+    !acceptedReferenceImageTypes.has(file.type)
+    || !hasMatchingReferenceImageExtension(file.name, file.type)
+  ) {
     return errorResponse("api.refUnsupportedType");
   }
 
-  if (file.size > maxImageBytes) {
+  if (file.size > maxReferenceImageBytes) {
     return errorResponse("api.refTooLargeSingle");
   }
 

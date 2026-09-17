@@ -5,6 +5,7 @@ import {
   serializeSessionCookie,
 } from "@/lib/auth/session";
 import { apiError } from "@/lib/video/errors";
+import { enforceLoginRateLimit } from "@/lib/security/rate-limit";
 
 export const runtime = "nodejs";
 
@@ -16,6 +17,9 @@ export async function POST(request: Request): Promise<Response> {
   if (config.mode === "disabled") {
     return Response.json({ authenticated: true });
   }
+
+  const rateLimitError = enforceLoginRateLimit(request);
+  if (rateLimitError) return rateLimitError;
 
   let payload: unknown;
   try {

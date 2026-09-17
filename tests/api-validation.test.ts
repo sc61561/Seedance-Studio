@@ -51,12 +51,12 @@ describe("POST /api/generate", () => {
     await expect(response.json()).resolves.toEqual({ code: "api.refInvalidContent" });
   });
 
-  it("拒绝超过 8 MB 的参考图", async () => {
+  it("拒绝超过 3 MB 的参考图以保证 Base64 JSON 低于 Vercel 请求上限", async () => {
     const response = await POST(
       requestFor({
         prompt: "生成一段视频",
         referenceImageDataUrl: `data:image/png;base64,${"a".repeat(
-          Math.ceil((8 * 1024 * 1024 * 4) / 3) + 1,
+          4 * Math.ceil((3 * 1024 * 1024 + 1) / 3),
         )}`,
       }),
     );

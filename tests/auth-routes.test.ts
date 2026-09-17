@@ -3,10 +3,13 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { POST as login } from "@/app/api/auth/login/route";
 import { POST as logout } from "@/app/api/auth/logout/route";
 
-const loginRequest = (body: unknown) =>
+const loginRequest = (body: unknown, ip?: string) =>
   new Request("http://localhost/api/auth/login", {
     method: "POST",
-    headers: { "content-type": "application/json" },
+    headers: {
+      "content-type": "application/json",
+      ...(ip ? { "x-forwarded-for": ip } : {}),
+    },
     body: JSON.stringify(body),
   });
 
@@ -79,6 +82,24 @@ describe("password auth routes", () => {
 
     expect(response.status).toBe(503);
     await expect(response.json()).resolves.toEqual({ code: "api.authNotConfigured" });
+  });
+
+  it("rate limits login attempts without revealing whether the next password is correct", async () => {
+    vi.stubEnv("APP_ACCESS_PASSWORD", "expected-password");
+    vi.stubEnv("SESSION_SECRET", "server-only-session-secret");
+    const ip = "198.51.100.77";
+
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      const response = await login(loginRequest({ password: "wrong-password" }, ip));
+      expect(response.status).toBe(401);
+    }
+
+    const blockedCorrectPassword = await login(loginRequest({ password: "expected-password" }, ip));
+
+    expect(blockedCorrectPassword.status).toBe(429);
+    await expect(blockedCorrectPassword.json()).resolves.toEqual({ code: "api.rateLimited" });
+    expect(Number(blockedCorrectPassword.headers.get("retry-after"))).toBeGreaterThan(0);
+    expect(blockedCorrectPassword.headers.get("set-cookie")).toBeNull();
   });
 
   it("clears the session cookie idempotently", async () => {

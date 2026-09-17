@@ -149,6 +149,23 @@ describe("SeedanceProvider", () => {
     );
   });
 
+  it("从上游错误详情中移除 Base64 图片内容", async () => {
+    fetchMock.mockResolvedValueOnce(createResponse({
+      error: {
+        code: "InvalidParameter",
+        message: "bad image data:image/png;base64,c2VjcmV0LWltYWdlLWRhdGE= in request",
+      },
+    }, 400));
+
+    await expect(new SeedanceProvider().createTask({
+      provider: "seedance",
+      model: "",
+      prompt: "测试",
+    })).rejects.toMatchObject({
+      detail: ": bad image [image data hidden] in request",
+    });
+  });
+
   it("将成功任务响应规范化为视频 URL", async () => {
     fetchMock.mockResolvedValueOnce(
       createResponse({

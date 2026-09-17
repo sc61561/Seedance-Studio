@@ -116,4 +116,24 @@ describe("protected API routes", () => {
     await expect(blocked.json()).resolves.toEqual({ code: "api.rateLimited" });
     expect(Number(blocked.headers.get("retry-after"))).toBeGreaterThan(0);
   });
+
+  it("rate limits authenticated image uploads before parsing repeated multipart bodies", async () => {
+    configureAuth();
+    const request = () => new Request("http://localhost/api/upload", {
+      method: "POST",
+      headers: authenticatedHeaders({ "x-forwarded-for": "203.0.113.88" }),
+      body: new FormData(),
+    });
+
+    // One generation can upload 10 references; leave room for a full retry set.
+    for (let attempt = 0; attempt < 20; attempt += 1) {
+      const response = await upload(request());
+      expect(response.status).toBe(400);
+    }
+
+    const blocked = await upload(request());
+    expect(blocked.status).toBe(429);
+    await expect(blocked.json()).resolves.toEqual({ code: "api.rateLimited" });
+    expect(Number(blocked.headers.get("retry-after"))).toBeGreaterThan(0);
+  });
 });

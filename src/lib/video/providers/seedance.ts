@@ -178,6 +178,7 @@ function errorForStatus(statusCode: number, payload?: ArkErrorResponse | null): 
 function sanitizeErrorDetail(value: string | undefined): string | undefined {
   const detail = value
     ?.replace(/Bearer\s+\S+/gi, "Bearer [hidden]")
+    .replace(/data:image\/(?:png|jpe?g|webp);base64,[A-Za-z0-9+/=]+/gi, "[image data hidden]")
     .replace(/\s+/g, " ")
     .trim();
 

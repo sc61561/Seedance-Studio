@@ -16,7 +16,7 @@
 - 固定使用已配置的火山方舟 Seedance 推理接入点；页面只需配置 `SEEDANCE_API_KEY`。
 - 提示词上限为 4000 字符，支持普通参考、连续关键帧和首尾帧三种生成模式。
 - 支持 480p/720p/1080p、常用画面比例和 2–30 秒时长（每次 1 秒）。
-- 支持最多 10 张 PNG、JPEG 或 WebP 参考图，可拖拽调整顺序，总大小不超过 8 MB。
+- 支持最多 10 张 PNG、JPEG 或 WebP 参考图，可拖拽调整顺序；单张及总大小不超过 3 MB，以满足 Vercel Function 4.5 MB 请求限制。
 - 页面默认中文，可通过右上角切换 English；界面不加载第三方品牌注入脚本。
 
 ## 启动
@@ -32,10 +32,10 @@ cp .env.local.example .env.local
 SEEDANCE_API_KEY=
 ```
 
-可选环境变量：
+其他环境变量（本地开发可选；生产环境的认证两项必需）：
 
 ```env
-# 同时设置后启用访问密码；生产环境未配置时会安全拒绝受保护请求
+# 本地开发可留空；生产环境必须同时设置，否则受保护路由会安全拒绝请求
 APP_ACCESS_PASSWORD=
 SESSION_SECRET=
 
@@ -56,8 +56,8 @@ npm run dev
 | 变量 | 必需 | 用途 |
 | --- | --- | --- |
 | `SEEDANCE_API_KEY` | 是 | 服务端调用火山方舟 Seedance |
-| `APP_ACCESS_PASSWORD` | 否 | 访问密码（需与 `SESSION_SECRET` 一起配置） |
-| `SESSION_SECRET` | 否 | 签名 HttpOnly 会话 Cookie |
+| `APP_ACCESS_PASSWORD` | 生产环境必需；本地可选 | 访问密码（需与 `SESSION_SECRET` 一起配置） |
+| `SESSION_SECRET` | 生产环境必需；本地可选 | 签名 HttpOnly 会话 Cookie，请使用随机长字符串 |
 | `BLOB_READ_WRITE_TOKEN` | 否 | Vercel Blob 参考图存储；未配置时使用浏览器会话回退 |
 
 不要把真实值提交到 Git。`.env*` 已加入忽略规则；部署平台请使用 Vercel Environment Variables。
@@ -65,7 +65,7 @@ npm run dev
 ## 使用说明
 
 - 可选择 480p/720p/1080p 分辨率、常用画面比例和 2–30 秒视频时长（每次 1 秒）；这些参数会在服务端校验后传给火山方舟。
-- 可上传最多 10 张 PNG、JPEG 或 WebP 图片（总大小不超过 8 MB）；图片会作为火山方舟 `reference_image` 参考图发送。
+- 可上传最多 10 张 PNG、JPEG 或 WebP 图片（单张及总大小不超过 3 MB）；配置 Blob 时发送 HTTPS URL，未配置存储时才使用当前浏览器会话的 Data URL 兼容回退。
 - 首次调用前，请确保该火山方舟接入点可用；生成会按你的火山方舟账户规则计费。
 - 视频任务由浏览器每 5 秒查询一次；生成成功后的视频 URL 有有效期，请及时下载。
 - 生成中的任务会保存非敏感任务 ID，刷新页面后自动继续查询；任务完成或失败后会清理。
@@ -79,7 +79,7 @@ npm run dev
 
 1. 将仓库连接到 Vercel。
 2. 在 Vercel 项目设置中添加 `SEEDANCE_API_KEY`。
-3. 如需访问保护，同时添加 `APP_ACCESS_PASSWORD` 与随机长字符串 `SESSION_SECRET`。
+3. 同时添加 `APP_ACCESS_PASSWORD` 与随机长字符串 `SESSION_SECRET`；两者在生产环境都是必需项，缺少任一项时受保护路由会返回配置错误。
 4. 如需 URL-first 参考图上传，连接 Vercel Blob 并添加 `BLOB_READ_WRITE_TOKEN`。
 5. 部署后打开分配域名，确认登录（如已启用）、上传、生成和 PWA 安装入口。
 
@@ -87,7 +87,7 @@ npm run dev
 
 ## 安全
 
-API Key 仅由服务器端 Route Handler 读取并转发给火山方舟。它不会发送到浏览器、写入本地存储、显示在错误信息中，或提交到 Git。启用访问保护后，登录使用签名 HttpOnly Cookie；生成接口还有单实例内存限流（多实例部署如需更强限制，可替换为共享 KV/Redis）。参考图会在服务端校验 PNG/JPEG/WebP 文件签名后再写入存储。
+API Key 仅由服务器端 Route Handler 读取并转发给火山方舟。它不会发送到浏览器、写入本地存储、显示在错误信息中，或提交到 Git。生产环境强制要求访问密码与会话密钥；登录、上传和生成接口使用单实例内存限流（多实例部署如需更强限制，可替换为共享 KV/Redis）。参考图会在服务端校验扩展名、MIME、文件签名和 3 MB 限额后再写入存储。
 
 ## Architecture
 

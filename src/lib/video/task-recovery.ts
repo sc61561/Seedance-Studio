@@ -35,6 +35,7 @@ type ActiveTaskRecoveryOptions = {
   onSchedule: (taskId: string) => void;
   onUnauthorized: () => void;
   onError: (body?: RecoveryApiErrorBody, error?: unknown) => void;
+  onTransientError: (body?: RecoveryApiErrorBody, error?: unknown) => void;
 };
 
 function isRecoveredVideoTask(value: unknown): value is RecoveredVideoTask {
@@ -63,6 +64,7 @@ export async function recoverActiveVideoTask({
   onSchedule,
   onUnauthorized,
   onError,
+  onTransientError,
 }: ActiveTaskRecoveryOptions): Promise<boolean> {
   const storedTask = readActiveVideoTask(storage, now);
   if (!storedTask) return false;
@@ -80,21 +82,38 @@ export async function recoverActiveVideoTask({
     );
     if (signal?.aborted) return true;
     if (response.status === 401) {
-      clearActiveVideoTask(storage);
       onUnauthorized();
       return true;
     }
 
-    const payload: unknown = await response.json();
+    let payload: unknown;
+    try {
+      payload = await response.json();
+    } catch (error) {
+      if (signal?.aborted) return true;
+      if (isTransientTaskPollingStatus(response.status)) {
+        onTransientError(undefined, error);
+        onSchedule(storedTask.taskId);
+        return true;
+      }
+      clearActiveVideoTask(storage);
+      onError(undefined, error);
+      return true;
+    }
     if (signal?.aborted) return true;
     if (!response.ok) {
+      if (isTransientTaskPollingStatus(response.status)) {
+        onTransientError(payload as RecoveryApiErrorBody);
+        onSchedule(storedTask.taskId);
+        return true;
+      }
       clearActiveVideoTask(storage);
       onError(payload as RecoveryApiErrorBody);
       return true;
     }
     if (!isRecoveredVideoTask(payload)) {
-      clearActiveVideoTask(storage);
-      onError();
+      onTransientError();
+      onSchedule(storedTask.taskId);
       return true;
     }
 
@@ -117,8 +136,12 @@ export async function recoverActiveVideoTask({
     return true;
   } catch (error) {
     if (signal?.aborted) return true;
-    clearActiveVideoTask(storage);
-    onError(undefined, error);
+    onTransientError(undefined, error);
+    onSchedule(storedTask.taskId);
     return true;
   }
+}
+
+export function isTransientTaskPollingStatus(status: number): boolean {
+  return status !== 401 && status !== 400 && status !== 404 && status !== 410;
 }

@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   NetworkStatusBanner,
+  MobileSubmitAction,
   ReferenceImageControls,
   TaskRecoveryNotice,
   VideoSuccessResult,
@@ -149,5 +150,31 @@ describe("VideoGenerator", () => {
 
     expect(markup).toContain("访问保护尚未配置");
     expect(markup).not.toContain('type="password"');
+  });
+
+  it("移动提交栏根据结果状态提供查看结果或重新生成", () => {
+    const successMarkup = renderToStaticMarkup(
+      <I18nProvider>
+        <MobileSubmitAction
+          status="succeeded"
+          disabled={false}
+          onViewResult={() => undefined}
+        />
+      </I18nProvider>,
+    );
+    const failedMarkup = renderToStaticMarkup(
+      <I18nProvider>
+        <MobileSubmitAction
+          status="failed"
+          disabled={false}
+          onViewResult={() => undefined}
+        />
+      </I18nProvider>,
+    );
+
+    expect(successMarkup).toContain('type="button"');
+    expect(successMarkup).toContain("查看结果");
+    expect(failedMarkup).toContain('type="submit"');
+    expect(failedMarkup).toContain("重新生成");
   });
 });

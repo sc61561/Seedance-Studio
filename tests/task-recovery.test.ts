@@ -63,6 +63,7 @@ describe("active task recovery controller", () => {
         onSchedule,
         onUnauthorized: vi.fn(),
         onError: vi.fn(),
+        onTransientError: vi.fn(),
       })).toBe(true);
 
       expect(fetchTask).toHaveBeenCalledTimes(1);
@@ -107,6 +108,7 @@ describe("active task recovery controller", () => {
       onSchedule,
       onUnauthorized: vi.fn(),
       onError: vi.fn(),
+      onTransientError: vi.fn(),
     });
 
     expect(onTask).toHaveBeenCalledWith({
@@ -137,13 +139,14 @@ describe("active task recovery controller", () => {
       onSchedule: vi.fn(),
       onUnauthorized: vi.fn(),
       onError: vi.fn(),
+      onTransientError: vi.fn(),
     });
 
     expect(onTask).toHaveBeenCalledWith(expect.objectContaining({ status: "failed" }));
     expect(storage.getItem(activeVideoTaskStorageKey)).toBeNull();
   });
 
-  it("clears active storage and enters the auth gate on a 401", async () => {
+  it("retains active storage and enters the auth gate on a 401", async () => {
     const storage = new MemoryStorage();
     seedActiveTask(storage);
     const onUnauthorized = vi.fn();
@@ -162,11 +165,12 @@ describe("active task recovery controller", () => {
       onSchedule: vi.fn(),
       onUnauthorized,
       onError: vi.fn(),
+      onTransientError: vi.fn(),
     });
 
     expect(onUnauthorized).toHaveBeenCalledTimes(1);
     expect(onTask).not.toHaveBeenCalled();
-    expect(storage.getItem(activeVideoTaskStorageKey)).toBeNull();
+    expect(storage.getItem(activeVideoTaskStorageKey)).not.toBeNull();
   });
 
   it("restores offline state without making a request and schedules a retry", async () => {
@@ -185,10 +189,63 @@ describe("active task recovery controller", () => {
       onSchedule,
       onUnauthorized: vi.fn(),
       onError: vi.fn(),
+      onTransientError: vi.fn(),
     });
 
     expect(fetchTask).not.toHaveBeenCalled();
     expect(onSchedule).toHaveBeenCalledWith("cgt-recover-once");
     expect(storage.getItem(activeVideoTaskStorageKey)).not.toBeNull();
+  });
+
+  it.each([
+    ["503 response", async () => Response.json({ code: "api.providerBusy" }, { status: 503 })],
+    ["403 provider auth response", async () => Response.json({ code: "api.providerAuthFailed" }, { status: 403 })],
+    ["malformed response", async () => Response.json({ unexpected: true })],
+    ["invalid JSON response", async () => new Response("not-json", { status: 200 })],
+    ["network failure", async () => { throw new TypeError("fetch failed"); }],
+  ])("retains and reschedules an active task after transient %s", async (_label, fetchTask) => {
+    const storage = new MemoryStorage();
+    seedActiveTask(storage);
+    const onSchedule = vi.fn();
+    const onTransientError = vi.fn();
+
+    await recoverActiveVideoTask({
+      storage,
+      now,
+      online: true,
+      fetchTask,
+      onRestore: vi.fn(),
+      onTask: vi.fn(),
+      onSchedule,
+      onUnauthorized: vi.fn(),
+      onError: vi.fn(),
+      onTransientError,
+    });
+
+    expect(storage.getItem(activeVideoTaskStorageKey)).not.toBeNull();
+    expect(onSchedule).toHaveBeenCalledWith("cgt-recover-once");
+    expect(onTransientError).toHaveBeenCalledTimes(1);
+  });
+
+  it("clears an invalid or expired task id after a definitive 404", async () => {
+    const storage = new MemoryStorage();
+    seedActiveTask(storage);
+    const onError = vi.fn();
+
+    await recoverActiveVideoTask({
+      storage,
+      now,
+      online: true,
+      fetchTask: async () => Response.json({ code: "api.taskIdInvalid" }, { status: 404 }),
+      onRestore: vi.fn(),
+      onTask: vi.fn(),
+      onSchedule: vi.fn(),
+      onUnauthorized: vi.fn(),
+      onError,
+      onTransientError: vi.fn(),
+    });
+
+    expect(storage.getItem(activeVideoTaskStorageKey)).toBeNull();
+    expect(onError).toHaveBeenCalledWith({ code: "api.taskIdInvalid" });
   });
 });

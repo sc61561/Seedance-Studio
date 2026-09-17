@@ -15,11 +15,13 @@ import {
 import { apiError, type ApiErrorBody, type ApiErrorParams } from "@/lib/video/errors";
 import { maxFinalPromptLength } from "@/lib/video/prompt-compiler";
 import { SeedanceProvider, VideoProviderError } from "@/lib/video/providers/seedance";
+import {
+  maxReferenceImageBytes,
+  maxReferenceImages,
+} from "@/lib/video/reference-image-limits";
 
 export const runtime = "nodejs";
 
-const maxImageBytes = 8 * 1024 * 1024;
-const maxReferenceImages = 10;
 const imageDataUrlPattern = /^data:image\/(png|jpeg|webp);base64,([A-Za-z0-9+/]+={0,2})$/;
 
 export async function POST(request: Request): Promise<Response> {
@@ -131,7 +133,7 @@ function validateReferenceImage(value: unknown): string | null {
   const padding = base64.endsWith("==") ? 2 : base64.endsWith("=") ? 1 : 0;
   const byteLength = (base64.length * 3) / 4 - padding;
 
-  if (byteLength > maxImageBytes) {
+  if (byteLength > maxReferenceImageBytes) {
     return "api.refTooLargeSingle";
   }
 
@@ -183,7 +185,7 @@ function resolveReferenceImages(
     totalBytes += dataUrlByteLength(image);
   }
 
-  if (totalBytes > maxImageBytes) {
+  if (totalBytes > maxReferenceImageBytes) {
     return { error: apiError("api.refTooLargeTotal") };
   }
 

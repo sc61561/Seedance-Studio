@@ -39,11 +39,21 @@ import {
   type MotionLevel,
 } from "@/lib/video/prompt-compiler";
 import {
+  applyReferenceImageUploadResult,
   buildReferenceImagePayload,
   moveReferenceImage,
+  prepareReferenceImage,
+  referenceImagesReadyForGeneration,
   reorderReferenceImages,
+  resolveReferenceImageUpload,
   type ReferenceImage,
 } from "@/lib/video/reference-images";
+import {
+  acceptedReferenceImageTypes,
+  hasMatchingReferenceImageExtension,
+  maxReferenceImageBytes,
+  maxReferenceImages,
+} from "@/lib/video/reference-image-limits";
 import {
   aspectRatioOptions,
   defaultDuration,
@@ -60,6 +70,7 @@ import {
 } from "@/lib/video/task-storage";
 import {
   recoverActiveVideoTask,
+  isTransientTaskPollingStatus,
   type RecoveredVideoTask,
   type RecoveryApiErrorBody,
 } from "@/lib/video/task-recovery";
@@ -73,9 +84,6 @@ type VideoTask = { taskId: string; status: VideoTaskState; videoUrl?: string; er
 
 type ApiErrorBody = { code?: string; params?: Record<string, string | number>; detail?: string };
 
-const maxImageBytes = 8 * 1024 * 1024;
-const maxReferenceImages = 10;
-const acceptedImageTypes = new Set(["image/jpeg", "image/png", "image/webp"]);
 const desktopMediaQuery = "(min-width: 640px)";
 
 function subscribeToOnlineStatus(onStoreChange: () => void): () => void {
@@ -103,6 +111,10 @@ function getDesktopSnapshot(): boolean {
   return typeof window !== "undefined" && Boolean(window.matchMedia?.(desktopMediaQuery).matches);
 }
 
+function getCurrentTimestamp(): number {
+  return Date.now();
+}
+
 export function VideoGenerator({
   initialAuthState = "disabled",
 }: {
@@ -127,6 +139,7 @@ export function VideoGenerator({
   const [motionLevel, setMotionLevel] = useState<MotionLevel>("auto");
   const [consistencyLevel, setConsistencyLevel] = useState<ConsistencyLevel>("high");
   const [referenceImages, setReferenceImages] = useState<ReferenceImage[]>([]);
+  const [referenceError, setReferenceError] = useState<string>();
   const [draggedImageId, setDraggedImageId] = useState<string>();
   const [task, setTask] = useState<VideoTask>({ taskId: "", status: "idle" });
   const [authState, setAuthState] = useState<AuthGateState>(initialAuthState);
@@ -144,6 +157,7 @@ export function VideoGenerator({
   const isMountedRef = useRef(true);
   const referenceImagesRef = useRef<ReferenceImage[]>([]);
   const activeTaskCreatedAtRef = useRef<number | undefined>(undefined);
+  const resultPanelRef = useRef<HTMLElement | null>(null);
 
   useEffect(() => {
     referenceImagesRef.current = referenceImages;
@@ -164,9 +178,9 @@ export function VideoGenerator({
     setRestoredTask(false);
   };
 
-  const persistTrackedActiveTask = (taskId: string, status: PersistedVideoTaskStatus) => {
-    const createdAt = activeTaskCreatedAtRef.current ?? Date.now();
-    activeTaskCreatedAtRef.current = createdAt;
+  const handlePersistTrackedActiveTask = (taskId: string, status: PersistedVideoTaskStatus) => {
+    const createdAt = activeTaskCreatedAtRef.current;
+    if (createdAt === undefined) return;
     persistActiveVideoTask({
       taskId,
       status,
@@ -228,15 +242,18 @@ export function VideoGenerator({
     }
   }
 
-  function handleUnauthorized() {
+  function handleUnauthorized(preserveActiveTask = false) {
     stopPolling();
-    clearTrackedActiveTask();
-    setTask({ taskId: "", status: "idle" });
+    if (!preserveActiveTask) {
+      clearTrackedActiveTask();
+      setTask({ taskId: "", status: "idle" });
+    }
     setAuthState("unauthenticated");
     setAuthError(t("api.unauthorized"));
   }
 
   const isGenerating = task.status === "submitting" || task.status === "queued" || task.status === "processing";
+  const referenceImagesReady = referenceImagesReadyForGeneration(referenceImages);
   const modeHint = generationMode === "first-last" && referenceImages.length < 2
     ? t("hint.firstLastNeedTwo")
     : generationMode === "keyframes" && referenceImages.length < 2
@@ -248,62 +265,86 @@ export function VideoGenerator({
   async function handleReferenceImageChange(files: FileList | null) {
     const selectedFiles = Array.from(files ?? []);
     if (selectedFiles.length === 0) return;
-    if (referenceImages.length + selectedFiles.length > maxReferenceImages) {
-      setTask({ taskId: "", status: "failed", error: t("err.tooManyImages", { n: maxReferenceImages }) });
+    const currentImages = referenceImagesRef.current;
+    if (currentImages.length + selectedFiles.length > maxReferenceImages) {
+      setReferenceError(t("err.tooManyImages", { n: maxReferenceImages }));
       return;
     }
-    if (selectedFiles.some((file) => !acceptedImageTypes.has(file.type))) {
-      setTask({ taskId: "", status: "failed", error: t("err.unsupportedType") });
+    if (selectedFiles.some((file) => (
+      !acceptedReferenceImageTypes.has(file.type)
+      || !hasMatchingReferenceImageExtension(file.name, file.type)
+    ))) {
+      setReferenceError(t("err.unsupportedType"));
       return;
     }
-    const existingBytes = referenceImages.reduce((total, image) => total + dataUrlByteLength(image.dataUrl), 0);
+    const existingBytes = currentImages.reduce((total, image) => total + image.size, 0);
     const selectedBytes = selectedFiles.reduce((total, file) => total + file.size, 0);
-    if (existingBytes + selectedBytes > maxImageBytes) {
-      setTask({ taskId: "", status: "failed", error: t("err.totalTooLarge") });
+    if (
+      selectedFiles.some((file) => file.size > maxReferenceImageBytes)
+      || existingBytes + selectedBytes > maxReferenceImageBytes
+    ) {
+      setReferenceError(t("err.totalTooLarge"));
       return;
     }
-    try {
-      const nextImages = await Promise.all(
-        selectedFiles.map((file, index) => createReferenceImage(file, index, handleUnauthorized)),
-      );
-      if (!isMountedRef.current) {
-        nextImages.forEach((image) => URL.revokeObjectURL(image.previewUrl));
-        return;
-      }
-      setReferenceImages((images) => [...images, ...nextImages]);
-      setTask({ taskId: "", status: "idle" });
-    } catch {
-      if (isMountedRef.current) {
-        setTask({ taskId: "", status: "failed", error: t("err.readFailed") });
-      }
-    }
+
+    const pendingImages = selectedFiles.map((file, index) => prepareReferenceImage(
+      file,
+      createReferenceImageId(index),
+      URL.createObjectURL(file),
+    ));
+    updateReferenceImages(() => [...currentImages, ...pendingImages]);
+    setReferenceError(undefined);
+    pendingImages.forEach((image) => {
+      if (image.file) void uploadReferenceImage(image.id, image.file);
+    });
+  }
+
+  async function uploadReferenceImage(id: string, file: File) {
+    const result = await resolveReferenceImageUpload(file);
+    if (!isMountedRef.current) return;
+    updateReferenceImages((images) => applyReferenceImageUploadResult(images, id, result));
+    if (result.status === "failed" && result.httpStatus === 401) handleUnauthorized();
+  }
+
+  function retryReferenceImage(id: string) {
+    const image = referenceImagesRef.current.find((item) => item.id === id);
+    if (!image?.file || image.uploadStatus !== "failed") return;
+    updateReferenceImages((images) => images.map((item) => (
+      item.id === id ? { ...item, uploadStatus: "uploading", error: undefined } : item
+    )));
+    void uploadReferenceImage(id, image.file);
+  }
+
+  function updateReferenceImages(updater: (images: ReferenceImage[]) => ReferenceImage[]) {
+    const nextImages = updater(referenceImagesRef.current);
+    referenceImagesRef.current = nextImages;
+    setReferenceImages(nextImages);
   }
 
   function removeReferenceImage(id: string) {
-    setReferenceImages((images) => {
+    updateReferenceImages((images) => {
       const image = images.find((item) => item.id === id);
       if (image) URL.revokeObjectURL(image.previewUrl);
       return images.filter((image) => image.id !== id);
     });
-    setTask({ taskId: "", status: "idle" });
+    setReferenceError(undefined);
   }
 
   function handleImageDrop(event: DragEvent<HTMLLIElement>, targetId: string) {
     event.preventDefault();
     if (draggedImageId) {
-      setReferenceImages((images) => reorderReferenceImages(images, draggedImageId, targetId));
+      updateReferenceImages((images) => reorderReferenceImages(images, draggedImageId, targetId));
     }
     setDraggedImageId(undefined);
   }
 
   function moveReferenceImageBy(id: string, offset: -1 | 1) {
-    setReferenceImages((images) => moveReferenceImage(images, id, offset));
-    setTask({ taskId: "", status: "idle" });
+    updateReferenceImages((images) => moveReferenceImage(images, id, offset));
   }
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (isGenerating || !isOnline || !prompt.trim()) return;
+    if (isGenerating || !isOnline || !prompt.trim() || !referenceImagesReady) return;
     stopPolling();
     clearTrackedActiveTask();
     setTask({ taskId: "", status: "submitting" });
@@ -354,7 +395,8 @@ export function VideoGenerator({
         throw new Error(localizeApiError(payload, "api.createFailed"));
       }
       const nextTask = { taskId: payload.taskId, status: "queued" as const };
-      persistTrackedActiveTask(nextTask.taskId, nextTask.status);
+      activeTaskCreatedAtRef.current = getCurrentTimestamp();
+      handlePersistTrackedActiveTask(nextTask.taskId, nextTask.status);
       setTask(nextTask);
       await pollTask(nextTask.taskId);
     } catch (error) {
@@ -383,18 +425,47 @@ export function VideoGenerator({
         cache: "no-store",
         signal: controller.signal,
       });
-      const payload = (await response.json()) as {
+      if (response.status === 401) {
+        handleUnauthorized(true);
+        return;
+      }
+      let payload: ({
         taskId: string;
         status: VideoTaskState;
         videoUrl?: string;
         errorCode?: string;
-      } & ApiErrorBody;
-      if (!isMountedRef.current || controller.signal.aborted) return;
-      if (response.status === 401) {
-        handleUnauthorized();
+      } & ApiErrorBody) | undefined;
+      try {
+        payload = await response.json() as typeof payload;
+      } catch {
+        if (isTransientTaskPollingStatus(response.status)) {
+          scheduleTaskPoll(taskId);
+          return;
+        }
+        clearTrackedActiveTask();
+        setTask({ taskId, status: "failed", error: t("api.queryFailed") });
+        stopPolling();
         return;
       }
-      if (!response.ok) throw new Error(localizeApiError(payload, "api.queryFailed"));
+      if (!isMountedRef.current || controller.signal.aborted) return;
+      if (!response.ok) {
+        if (isTransientTaskPollingStatus(response.status)) {
+          scheduleTaskPoll(taskId);
+          return;
+        }
+        clearTrackedActiveTask();
+        setTask({ taskId, status: "failed", error: localizeApiError(payload, "api.queryFailed") });
+        stopPolling();
+        return;
+      }
+      if (
+        !payload
+        || typeof payload.taskId !== "string"
+        || !["queued", "processing", "succeeded", "failed"].includes(payload.status)
+      ) {
+        scheduleTaskPoll(taskId);
+        return;
+      }
       const nextTask = {
         taskId: payload.taskId,
         status: payload.status,
@@ -413,21 +484,15 @@ export function VideoGenerator({
         stopPolling();
         return;
       }
-      persistTrackedActiveTask(payload.taskId, payload.status);
+      handlePersistTrackedActiveTask(payload.taskId, payload.status);
       scheduleTaskPoll(taskId);
-    } catch (error) {
+    } catch {
       if (!isMountedRef.current || controller.signal.aborted) return;
       if (typeof navigator !== "undefined" && !navigator.onLine) {
         scheduleTaskPoll(taskId);
         return;
       }
-      clearTrackedActiveTask();
-      setTask({
-        taskId,
-        status: "failed",
-        error: error instanceof Error ? error.message : t("api.queryFailed"),
-      });
-      stopPolling();
+      scheduleTaskPoll(taskId);
     } finally {
       if (pollAbortRef.current === controller) pollAbortRef.current = null;
     }
@@ -485,7 +550,11 @@ export function VideoGenerator({
           if (isMountedRef.current && !controller.signal.aborted) scheduleTaskPoll(taskId);
         },
         onUnauthorized: () => {
-          if (isMountedRef.current && !controller.signal.aborted) handleUnauthorized();
+          if (isMountedRef.current && !controller.signal.aborted) handleUnauthorized(true);
+        },
+        onTransientError: () => {
+          if (!isMountedRef.current || controller.signal.aborted) return;
+          setRestoredTask(true);
         },
         onError: (body?: RecoveryApiErrorBody, error?: unknown) => {
           if (!isMountedRef.current || controller.signal.aborted) return;
@@ -684,6 +753,7 @@ export function VideoGenerator({
                 </label>
 
                 <p className="mt-3 text-xs leading-5 text-[var(--text-3)]">{modeHint}</p>
+                {referenceError && <p className="mt-2 text-xs text-red-600" role="alert">{referenceError}</p>}
 
                 {referenceImages.length > 0 && (
                   <ol className="mt-5 grid grid-cols-2 gap-2.5 sm:grid-cols-3" aria-label={t("ref.listLabel")}>
@@ -703,6 +773,26 @@ export function VideoGenerator({
                           <span className="flex min-w-0 items-center gap-1.5 text-[11px] text-[var(--text-2)]"><GripVertical className="size-3 shrink-0 text-[var(--text-3)]" /> {String(index + 1).padStart(2, "0")}</span>
                           <span className="min-w-0 truncate text-[11px] text-[var(--text-3)]" title={image.name}>{image.name}</span>
                         </div>
+                        <div className="border-t border-[var(--line)] px-2.5 py-2 text-[11px] text-[var(--text-3)]">
+                          {image.uploadStatus === "uploading" && t("ref.status.uploading")}
+                          {image.uploadStatus === "uploaded" && t("ref.status.uploaded")}
+                          {image.uploadStatus === "local" && t("ref.status.local")}
+                          {image.uploadStatus === "failed" && (
+                            <div className="flex items-center justify-between gap-2">
+                              <span className="min-w-0 text-red-600">
+                                {localizeApiError(image.error, "api.uploadFailed")}
+                              </span>
+                              <button
+                                className="shrink-0 underline underline-offset-2"
+                                type="button"
+                                onClick={() => retryReferenceImage(image.id)}
+                                disabled={!image.file || !isOnline}
+                              >
+                                {t("ref.retry")}
+                              </button>
+                            </div>
+                          )}
+                        </div>
                         <ReferenceImageControls
                           imageName={image.name}
                           index={index}
@@ -718,16 +808,16 @@ export function VideoGenerator({
               </div>
 
               <div className="studio-mobile-submit-bar border-t border-[var(--line)]">
-                <button className="studio-submit group mx-auto flex w-full max-w-[660px] items-center justify-center gap-2" type="submit" disabled={!prompt.trim() || isGenerating || !isOnline}>
-                  {isGenerating ? <LoaderCircle className="size-4 animate-spin" /> : <Sparkles className="size-4" />}
-                  <span>{isGenerating ? t("submit.generating") : t("submit.generate")}</span>
-                  {!isGenerating && <ArrowUpRight className="size-4 transition-transform group-hover:-translate-y-0.5 group-hover:translate-x-0.5" />}
-                </button>
+                <MobileSubmitAction
+                  status={task.status}
+                  disabled={!prompt.trim() || isGenerating || !isOnline || !referenceImagesReady}
+                  onViewResult={() => resultPanelRef.current?.scrollIntoView({ behavior: "smooth", block: "start" })}
+                />
               </div>
             </form>
           </section>
 
-          <section className="studio-result-panel lg:sticky lg:top-8" aria-live="polite">
+          <section ref={resultPanelRef} className="studio-result-panel lg:sticky lg:top-8" aria-live="polite">
             <div className="flex items-center justify-between gap-4 border-b border-[var(--line)] px-5 py-5 sm:px-7">
               <h2 className="studio-panel-title">{t("result.heading")}</h2>
               <TaskBadge status={task.status} />
@@ -782,6 +872,40 @@ export function NetworkStatusBanner({ isOnline }: { isOnline: boolean }) {
       <WifiOff className="size-4 shrink-0" aria-hidden="true" />
       <span>{t("network.offline")}</span>
     </div>
+  );
+}
+
+export function MobileSubmitAction({
+  status,
+  disabled,
+  onViewResult,
+}: {
+  status: VideoTaskState;
+  disabled: boolean;
+  onViewResult: () => void;
+}) {
+  const { t } = useI18n();
+  const isGenerating = status === "submitting" || status === "queued" || status === "processing";
+  const isSucceeded = status === "succeeded";
+  const label = isGenerating
+    ? t("submit.generating")
+    : isSucceeded
+      ? t("submit.viewResult")
+      : status === "failed"
+        ? t("submit.regenerate")
+        : t("submit.generate");
+
+  return (
+    <button
+      className="studio-submit group mx-auto flex w-full max-w-[660px] items-center justify-center gap-2"
+      type={isSucceeded ? "button" : "submit"}
+      disabled={isSucceeded ? false : disabled}
+      onClick={isSucceeded ? onViewResult : undefined}
+    >
+      {isGenerating ? <LoaderCircle className="size-4 animate-spin" /> : <Sparkles className="size-4" />}
+      <span>{label}</span>
+      {!isGenerating && <ArrowUpRight className="size-4 transition-transform group-hover:-translate-y-0.5 group-hover:translate-x-0.5" />}
+    </button>
   );
 }
 
@@ -1068,53 +1192,6 @@ function TaskBadge({ status }: { status: VideoTaskState }) {
   return <span className="studio-task-badge">{t("badge.idle")}</span>;
 }
 
-function readFileAsDataUrl(file: File): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onerror = () => reject(reader.error);
-    reader.onload = () => resolve(String(reader.result));
-    reader.readAsDataURL(file);
-  });
-}
-
-function dataUrlByteLength(value: string): number {
-  const base64 = value.split(",", 2)[1] ?? "";
-  const padding = base64.endsWith("==") ? 2 : base64.endsWith("=") ? 1 : 0;
-  return (base64.length * 3) / 4 - padding;
-}
-
 function createReferenceImageId(index: number): string {
   return `${Date.now()}-${index}-${Math.random().toString(36).slice(2)}`;
-}
-
-async function createReferenceImage(
-  file: File,
-  index: number,
-  onUnauthorized: () => void,
-): Promise<ReferenceImage> {
-  const dataUrl = await readFileAsDataUrl(file);
-  const image: ReferenceImage = {
-    id: createReferenceImageId(index),
-    name: file.name,
-    dataUrl,
-    previewUrl: URL.createObjectURL(file),
-    uploadStatus: "uploading",
-  };
-
-  try {
-    const formData = new FormData();
-    formData.set("file", file);
-    const response = await fetch("/api/upload", { method: "POST", body: formData });
-    const payload = await response.json() as { url?: string } & ApiErrorBody;
-    if (response.status === 401) {
-      onUnauthorized();
-    }
-    if (response.ok && payload.url) {
-      return { ...image, remoteUrl: payload.url, uploadStatus: "uploaded" };
-    }
-  } catch {
-    // The data URL remains the local development fallback when upload cannot run.
-  }
-
-  return { ...image, uploadStatus: "local" };
 }

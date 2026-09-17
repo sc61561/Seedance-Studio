@@ -77,6 +77,18 @@ const generationLimiter = new InMemoryRateLimiter({
   maxKeys: 5_000,
 });
 
+const loginLimiter = new InMemoryRateLimiter({
+  minuteLimit: 5,
+  hourLimit: 30,
+  maxKeys: 5_000,
+});
+
+const uploadLimiter = new InMemoryRateLimiter({
+  minuteLimit: 20,
+  hourLimit: 120,
+  maxKeys: 5_000,
+});
+
 export function getClientIp(request: Request): string {
   const candidates = [
     request.headers.get("x-forwarded-for"),
@@ -96,7 +108,19 @@ export function getClientIp(request: Request): string {
 }
 
 export function enforceGenerationRateLimit(request: Request): Response | null {
-  const result = generationLimiter.consume(getClientIp(request));
+  return enforceRateLimit(generationLimiter, request);
+}
+
+export function enforceLoginRateLimit(request: Request): Response | null {
+  return enforceRateLimit(loginLimiter, request);
+}
+
+export function enforceUploadRateLimit(request: Request): Response | null {
+  return enforceRateLimit(uploadLimiter, request);
+}
+
+function enforceRateLimit(limiter: InMemoryRateLimiter, request: Request): Response | null {
+  const result = limiter.consume(getClientIp(request));
   if (result.allowed) return null;
 
   return Response.json(apiError("api.rateLimited"), {

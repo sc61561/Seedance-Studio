@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { POST } from "@/app/api/generate/route";
 
@@ -10,6 +10,10 @@ const requestFor = (body: unknown) =>
   });
 
 describe("POST /api/generate", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.unstubAllGlobals();
+  });
   it("拒绝空提示词", async () => {
     const response = await POST(requestFor({ prompt: "   " }));
 
@@ -51,12 +55,12 @@ describe("POST /api/generate", () => {
     await expect(response.json()).resolves.toEqual({ code: "api.refInvalidContent" });
   });
 
-  it("拒绝超过 8 MB 的参考图", async () => {
+  it("拒绝超过 3 MB 的参考图以保证 Base64 JSON 低于 Vercel 请求上限", async () => {
     const response = await POST(
       requestFor({
         prompt: "生成一段视频",
         referenceImageDataUrl: `data:image/png;base64,${"a".repeat(
-          Math.ceil((8 * 1024 * 1024 * 4) / 3) + 1,
+          4 * Math.ceil((3 * 1024 * 1024 + 1) / 3),
         )}`,
       }),
     );
@@ -70,6 +74,67 @@ describe("POST /api/generate", () => {
       requestFor({
         prompt: "生成一段视频",
         referenceImageDataUrls: Array.from({ length: 11 }, () => "data:image/png;base64,iVBORw0KGgo="),
+      }),
+    );
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toEqual({
+      code: "api.refTooMany",
+      params: { n: 10 },
+    });
+  });
+
+  it("接受 HTTPS 上传后的参考图 URL", async () => {
+    const response = await POST(
+      requestFor({
+        prompt: "生成一段视频",
+        referenceImageUrls: ["https://blob.example.com/reference-images/safe-key.png"],
+      }),
+    );
+
+    expect(response.status).toBe(503);
+    await expect(response.json()).resolves.toEqual({ code: "api.providerNoKey" });
+  });
+
+  it("保留上游鉴权错误码，供客户端区别于本地会话过期", async () => {
+    vi.stubEnv("SEEDANCE_API_KEY", "test-server-key");
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json({
+      error: { code: "Unauthorized", message: "invalid upstream key" },
+    }, { status: 401 })));
+    const response = await POST(new Request("http://localhost/api/generate", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-forwarded-for": "203.0.113.123",
+      },
+      body: JSON.stringify({ prompt: "生成一段视频" }),
+    }));
+
+    expect(response.status).toBe(401);
+    await expect(response.json()).resolves.toEqual({ code: "api.providerAuthFailed" });
+  });
+
+  it.each([
+    "http://blob.example.com/image.png",
+    "file:///tmp/image.png",
+    "javascript:alert(1)",
+    "data:image/png;base64,iVBORw0KGgo=",
+    "ftp://blob.example.com/image.png",
+    "not a url",
+  ])("拒绝不安全或无效的参考图 URL：%s", async (referenceImageUrl) => {
+    const response = await POST(
+      requestFor({ prompt: "生成一段视频", referenceImageUrls: [referenceImageUrl] }),
+    );
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toEqual({ code: "api.refInvalidUrl" });
+  });
+
+  it("拒绝超过十张的参考图 URL", async () => {
+    const response = await POST(
+      requestFor({
+        prompt: "生成一段视频",
+        referenceImageUrls: Array.from({ length: 11 }, (_, index) => `https://blob.example.com/${index}.png`),
       }),
     );
 

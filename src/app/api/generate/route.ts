@@ -1,5 +1,7 @@
 import { Buffer } from "node:buffer";
 
+import { requireApiAuth } from "@/lib/auth/guard";
+import { enforceGenerationRateLimit } from "@/lib/security/rate-limit";
 import {
   aspectRatioOptions,
   defaultDuration,
@@ -13,14 +15,19 @@ import {
 import { apiError, type ApiErrorBody, type ApiErrorParams } from "@/lib/video/errors";
 import { maxFinalPromptLength } from "@/lib/video/prompt-compiler";
 import { SeedanceProvider, VideoProviderError } from "@/lib/video/providers/seedance";
+import {
+  maxReferenceImageBytes,
+  maxReferenceImages,
+} from "@/lib/video/reference-image-limits";
 
 export const runtime = "nodejs";
 
-const maxImageBytes = 8 * 1024 * 1024;
-const maxReferenceImages = 10;
 const imageDataUrlPattern = /^data:image\/(png|jpeg|webp);base64,([A-Za-z0-9+/]+={0,2})$/;
 
 export async function POST(request: Request): Promise<Response> {
+  const authError = requireApiAuth(request);
+  if (authError) return authError;
+
   const payload = await parseRequest(request);
 
   if (!payload) {
@@ -75,6 +82,9 @@ export async function POST(request: Request): Promise<Response> {
     return errorResponse(duration.error.code, duration.error.params);
   }
 
+  const rateLimitError = enforceGenerationRateLimit(request);
+  if (rateLimitError) return rateLimitError;
+
   try {
     const task = await new SeedanceProvider().createTask({
       provider: "seedance",
@@ -123,7 +133,7 @@ function validateReferenceImage(value: unknown): string | null {
   const padding = base64.endsWith("==") ? 2 : base64.endsWith("=") ? 1 : 0;
   const byteLength = (base64.length * 3) / 4 - padding;
 
-  if (byteLength > maxImageBytes) {
+  if (byteLength > maxReferenceImageBytes) {
     return "api.refTooLargeSingle";
   }
 
@@ -136,6 +146,23 @@ function validateReferenceImage(value: unknown): string | null {
 function resolveReferenceImages(
   payload: Record<string, unknown>,
 ): { urls: string[] } | { error: ApiErrorBody } {
+  const uploadedUrls = payload.referenceImageUrls;
+  if (uploadedUrls !== undefined) {
+    if (!Array.isArray(uploadedUrls) || uploadedUrls.some((item) => typeof item !== "string")) {
+      return { error: apiError("api.refInvalidUrl") };
+    }
+
+    if (uploadedUrls.length > maxReferenceImages) {
+      return { error: apiError("api.refTooMany", { n: maxReferenceImages }) };
+    }
+
+    if (uploadedUrls.some((url) => !isHttpsUrl(url))) {
+      return { error: apiError("api.refInvalidUrl") };
+    }
+
+    return { urls: uploadedUrls };
+  }
+
   const value =
     payload.referenceImageDataUrls ??
     (payload.referenceImageDataUrl === undefined ? [] : [payload.referenceImageDataUrl]);
@@ -158,11 +185,19 @@ function resolveReferenceImages(
     totalBytes += dataUrlByteLength(image);
   }
 
-  if (totalBytes > maxImageBytes) {
+  if (totalBytes > maxReferenceImageBytes) {
     return { error: apiError("api.refTooLargeTotal") };
   }
 
   return { urls: value };
+}
+
+function isHttpsUrl(value: string): boolean {
+  try {
+    return new URL(value).protocol === "https:";
+  } catch {
+    return false;
+  }
 }
 
 function dataUrlByteLength(value: string): number {

@@ -2,8 +2,9 @@ import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
   experimental: {
-    // 8 MB 原图编码为 data URL 后约为 10.7 MB，需留出 JSON 请求体余量。
-    proxyClientMaxBodySize: "12mb",
+    // Match Vercel's request ceiling; route/client validation keeps raw images
+    // at 3 MiB so Base64 JSON and multipart framing remain below this value.
+    proxyClientMaxBodySize: "4.5mb",
   },
 };
 

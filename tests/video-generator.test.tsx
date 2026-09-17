@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 import {
   NetworkStatusBanner,
   ReferenceImageControls,
+  TaskRecoveryNotice,
   VideoGenerator,
 } from "@/components/studio/video-generator";
 import { I18nProvider } from "@/lib/i18n/context";
@@ -89,6 +90,19 @@ describe("VideoGenerator", () => {
     expect(onlineMarkup).toBe("");
     expect(offlineMarkup).toContain('role="status"');
     expect(offlineMarkup).toContain("当前离线，视频生成需要网络连接");
+  });
+
+  it("恢复本地任务后显示明确的继续查询状态", () => {
+    const inactiveMarkup = renderToStaticMarkup(
+      <I18nProvider><TaskRecoveryNotice restored={false} /></I18nProvider>,
+    );
+    const activeMarkup = renderToStaticMarkup(
+      <I18nProvider><TaskRecoveryNotice restored /></I18nProvider>,
+    );
+
+    expect(inactiveMarkup).toBe("");
+    expect(activeMarkup).toContain('role="status"');
+    expect(activeMarkup).toContain("已恢复上次的视频任务，正在继续查询进度");
   });
 
   it("提供中英双语切换入口", () => {

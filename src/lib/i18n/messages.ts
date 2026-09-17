@@ -84,6 +84,7 @@ const en: Dict = {
   "ref.moveLeft": "Move {name} left",
   "ref.moveRight": "Move {name} right",
   "network.offline": "You are offline. Video generation requires a network connection.",
+  "task.restored": "Restored the previous video task and resumed checking its progress.",
   // Submit
   "submit.generating": "Generating…",
   "submit.generate": "Generate video",
@@ -225,6 +226,7 @@ const zh: Dict = {
   "ref.moveLeft": "向左移动 {name}",
   "ref.moveRight": "向右移动 {name}",
   "network.offline": "当前离线，视频生成需要网络连接",
+  "task.restored": "已恢复上次的视频任务，正在继续查询进度",
   "submit.generating": "正在生成…",
   "submit.generate": "生成视频",
   "result.index": "OUTPUT / LIVE",

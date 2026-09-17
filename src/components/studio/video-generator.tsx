@@ -1,7 +1,7 @@
 "use client";
 
 import type { DragEvent, FormEvent } from "react";
-import { useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { useEffect, useEffectEvent, useRef, useState, useSyncExternalStore } from "react";
 import {
   ArrowLeft,
   ArrowRight,
@@ -50,6 +50,13 @@ import {
   minDuration,
   resolutionOptions,
 } from "@/lib/video/models";
+import {
+  clearActiveVideoTask,
+  persistActiveVideoTask,
+  restoreActiveVideoTask,
+  type PersistedVideoTask,
+  type PersistedVideoTaskStatus,
+} from "@/lib/video/task-storage";
 import { useI18n } from "@/lib/i18n/context";
 import type { AuthGateState } from "@/lib/auth/types";
 import { LanguageSwitcher } from "@/components/studio/language-switcher";
@@ -120,6 +127,7 @@ export function VideoGenerator({
   const [authError, setAuthError] = useState<string>();
   const [authPending, setAuthPending] = useState(false);
   const [advancedOpenPreference, setAdvancedOpenPreference] = useState<boolean | null>(null);
+  const [restoredTask, setRestoredTask] = useState(false);
   const isOnline = useSyncExternalStore(subscribeToOnlineStatus, getOnlineSnapshot, () => true);
   const isDesktop = useSyncExternalStore(subscribeToDesktopViewport, getDesktopSnapshot, () => false);
   const advancedOpen = advancedOpenPreference ?? isDesktop;
@@ -128,6 +136,7 @@ export function VideoGenerator({
   const submitAbortRef = useRef<AbortController | null>(null);
   const isMountedRef = useRef(true);
   const referenceImagesRef = useRef<ReferenceImage[]>([]);
+  const activeTaskCreatedAtRef = useRef<number | undefined>(undefined);
 
   useEffect(() => {
     referenceImagesRef.current = referenceImages;
@@ -140,6 +149,26 @@ export function VideoGenerator({
     }
     pollAbortRef.current?.abort();
     pollAbortRef.current = null;
+  };
+
+  const clearTrackedActiveTask = () => {
+    clearActiveVideoTask();
+    activeTaskCreatedAtRef.current = undefined;
+    setRestoredTask(false);
+  };
+
+  const persistTrackedActiveTask = (taskId: string, status: PersistedVideoTaskStatus) => {
+    const createdAt = activeTaskCreatedAtRef.current ?? Date.now();
+    activeTaskCreatedAtRef.current = createdAt;
+    persistActiveVideoTask({
+      taskId,
+      status,
+      createdAt,
+      model: defaultSeedanceModel(),
+      resolution,
+      aspectRatio,
+      duration,
+    });
   };
 
   useEffect(() => {
@@ -183,6 +212,7 @@ export function VideoGenerator({
   async function handleLogout() {
     stopPolling();
     submitAbortRef.current?.abort();
+    clearTrackedActiveTask();
     setTask({ taskId: "", status: "idle" });
     try {
       await fetch("/api/auth/logout", { method: "POST" });
@@ -193,22 +223,10 @@ export function VideoGenerator({
 
   function handleUnauthorized() {
     stopPolling();
+    clearTrackedActiveTask();
     setTask({ taskId: "", status: "idle" });
     setAuthState("unauthenticated");
     setAuthError(t("api.unauthorized"));
-  }
-
-  if (authState === "unauthenticated" || authState === "unconfigured") {
-    return (
-      <AuthGate
-        state={authState}
-        password={authPassword}
-        error={authError}
-        pending={authPending}
-        onPasswordChange={setAuthPassword}
-        onSubmit={handleLogin}
-      />
-    );
   }
 
   const isGenerating = task.status === "submitting" || task.status === "queued" || task.status === "processing";
@@ -280,6 +298,7 @@ export function VideoGenerator({
     event.preventDefault();
     if (isGenerating || !isOnline || !prompt.trim()) return;
     stopPolling();
+    clearTrackedActiveTask();
     setTask({ taskId: "", status: "submitting" });
     const controller = new AbortController();
     submitAbortRef.current = controller;
@@ -328,6 +347,7 @@ export function VideoGenerator({
         throw new Error(localizeApiError(payload, "api.createFailed"));
       }
       const nextTask = { taskId: payload.taskId, status: "queued" as const };
+      persistTrackedActiveTask(nextTask.taskId, nextTask.status);
       setTask(nextTask);
       await pollTask(nextTask.taskId);
     } catch (error) {
@@ -344,10 +364,9 @@ export function VideoGenerator({
 
   async function pollTask(taskId: string) {
     if (!isMountedRef.current) return;
+    if (pollAbortRef.current) return;
     if (typeof navigator !== "undefined" && !navigator.onLine) {
-      pollTimerRef.current = setTimeout(() => {
-        if (isMountedRef.current) void pollTask(taskId);
-      }, 5_000);
+      scheduleTaskPoll(taskId);
       return;
     }
     const controller = new AbortController();
@@ -369,27 +388,33 @@ export function VideoGenerator({
         return;
       }
       if (!response.ok) throw new Error(localizeApiError(payload, "api.queryFailed"));
-      setTask({
+      const nextTask = {
         taskId: payload.taskId,
         status: payload.status,
         videoUrl: payload.videoUrl,
         error: payload.errorCode ? t(payload.errorCode) : undefined,
-      });
+      };
+      setTask(nextTask);
       if (payload.status === "succeeded" || payload.status === "failed") {
+        clearTrackedActiveTask();
         stopPolling();
         return;
       }
-      pollTimerRef.current = setTimeout(() => {
-        if (isMountedRef.current) void pollTask(taskId);
-      }, 5_000);
+      if (payload.status !== "queued" && payload.status !== "processing") {
+        clearTrackedActiveTask();
+        setTask({ taskId, status: "failed", error: t("api.queryFailed") });
+        stopPolling();
+        return;
+      }
+      persistTrackedActiveTask(payload.taskId, payload.status);
+      scheduleTaskPoll(taskId);
     } catch (error) {
       if (!isMountedRef.current || controller.signal.aborted) return;
       if (typeof navigator !== "undefined" && !navigator.onLine) {
-        pollTimerRef.current = setTimeout(() => {
-          if (isMountedRef.current) void pollTask(taskId);
-        }, 5_000);
+        scheduleTaskPoll(taskId);
         return;
       }
+      clearTrackedActiveTask();
       setTask({
         taskId,
         status: "failed",
@@ -399,6 +424,54 @@ export function VideoGenerator({
     } finally {
       if (pollAbortRef.current === controller) pollAbortRef.current = null;
     }
+  }
+
+  function scheduleTaskPoll(taskId: string) {
+    if (pollTimerRef.current) clearTimeout(pollTimerRef.current);
+    pollTimerRef.current = setTimeout(() => {
+      pollTimerRef.current = null;
+      if (isMountedRef.current) void pollTask(taskId);
+    }, 5_000);
+  }
+
+  const resumeStoredTask = useEffectEvent((storedTask: PersistedVideoTask) => {
+    activeTaskCreatedAtRef.current = storedTask.createdAt;
+    if (storedTask.resolution && (resolutionOptions as readonly string[]).includes(storedTask.resolution)) {
+      setResolution(storedTask.resolution as (typeof resolutionOptions)[number]);
+    }
+    if (storedTask.aspectRatio && (aspectRatioOptions as readonly string[]).includes(storedTask.aspectRatio)) {
+      setAspectRatio(storedTask.aspectRatio as (typeof aspectRatioOptions)[number]);
+    }
+    if (
+      storedTask.duration !== undefined
+      && storedTask.duration >= minDuration
+      && storedTask.duration <= maxDuration
+    ) {
+      setDuration(storedTask.duration);
+    }
+    setTask({ taskId: storedTask.taskId, status: storedTask.status });
+    setRestoredTask(true);
+    void pollTask(storedTask.taskId);
+  });
+
+  useEffect(() => {
+    if (authState === "unauthenticated" || authState === "unconfigured") return;
+
+    stopPolling();
+    restoreActiveVideoTask(resumeStoredTask);
+  }, [authState]);
+
+  if (authState === "unauthenticated" || authState === "unconfigured") {
+    return (
+      <AuthGate
+        state={authState}
+        password={authPassword}
+        error={authError}
+        pending={authPending}
+        onPasswordChange={setAuthPassword}
+        onSubmit={handleLogin}
+      />
+    );
   }
 
   return (
@@ -435,6 +508,7 @@ export function VideoGenerator({
         </header>
 
         <NetworkStatusBanner isOnline={isOnline} />
+        <TaskRecoveryNotice restored={restoredTask} />
 
         <div className="mb-9 max-w-3xl sm:mb-11">
           <p className="studio-eyebrow mb-3">{t("hero.eyebrow")}</p>
@@ -667,6 +741,18 @@ export function NetworkStatusBanner({ isOnline }: { isOnline: boolean }) {
     <div className="studio-network-status mb-6 flex items-center gap-2" role="status">
       <WifiOff className="size-4 shrink-0" aria-hidden="true" />
       <span>{t("network.offline")}</span>
+    </div>
+  );
+}
+
+export function TaskRecoveryNotice({ restored }: { restored: boolean }) {
+  const { t } = useI18n();
+  if (!restored) return null;
+
+  return (
+    <div className="studio-network-status mb-6 flex items-center gap-2" role="status">
+      <LoaderCircle className="size-4 shrink-0 animate-spin" aria-hidden="true" />
+      <span>{t("task.restored")}</span>
     </div>
   );
 }

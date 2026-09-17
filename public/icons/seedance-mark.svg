@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="Seedance Studio">
+  <rect width="512" height="512" rx="96" fill="#111111"/>
+  <g fill="none" stroke="#f3f3ef" stroke-linejoin="round" stroke-width="24">
+    <path d="M120 210h272v184H120z"/>
+    <path d="m112 134 258-52 18 86-258 52z"/>
+    <path d="m168 123 44 76M246 107l44 76M324 91l44 76"/>
+  </g>
+  <path d="m232 264 80 52-80 52z" fill="#f3f3ef"/>
+</svg>

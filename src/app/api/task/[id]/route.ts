@@ -1,4 +1,8 @@
-import { requireApiAuth } from "@/lib/auth/guard";
+import {
+  readSeedanceApiKey,
+  seedanceApiKeyErrorResponse,
+} from "@/lib/security/api-key";
+import { enforceTaskRateLimit } from "@/lib/security/rate-limit";
 import { apiError } from "@/lib/video/errors";
 import { SeedanceProvider, VideoProviderError } from "@/lib/video/providers/seedance";
 
@@ -10,8 +14,8 @@ export async function GET(
   request: Request,
   context: TaskRouteContext,
 ): Promise<Response> {
-  const authError = requireApiAuth(request);
-  if (authError) return authError;
+  const apiKey = readSeedanceApiKey(request);
+  if (!apiKey.ok) return seedanceApiKeyErrorResponse(apiKey);
 
   const { id } = await context.params;
 
@@ -19,8 +23,11 @@ export async function GET(
     return Response.json(apiError("api.taskIdInvalid"), { status: 400 });
   }
 
+  const rateLimitError = enforceTaskRateLimit(request);
+  if (rateLimitError) return rateLimitError;
+
   try {
-    const task = await new SeedanceProvider().getTask(id);
+    const task = await new SeedanceProvider(apiKey.apiKey).getTask(id);
     return Response.json(task);
   } catch (error) {
     if (error instanceof VideoProviderError) {

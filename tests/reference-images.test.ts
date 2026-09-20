@@ -109,38 +109,13 @@ describe("reference image upload lifecycle", () => {
     expect(updated[1]).toBe(second);
   });
 
-  it("只在 503 storageNotConfigured 时读取 Data URL 回退", async () => {
+  it("始终在浏览器本地读取 Data URL，不依赖部署端上传存储", async () => {
     const file = new File(["image"], "one.png", { type: "image/png" });
     const readDataUrl = async () => "data:image/png;base64,aW1hZ2U=";
 
-    await expect(resolveReferenceImageUpload(
-      file,
-      async () => Response.json({ code: "api.storageNotConfigured" }, { status: 503 }),
-      readDataUrl,
-    )).resolves.toEqual({ status: "local", dataUrl: "data:image/png;base64,aW1hZ2U=" });
-
-    await expect(resolveReferenceImageUpload(
-      file,
-      async () => Response.json({ code: "api.uploadFailed" }, { status: 502 }),
-      async () => {
-        throw new Error("must not read Base64");
-      },
-    )).resolves.toEqual({ status: "failed", error: { code: "api.uploadFailed" }, httpStatus: 502 });
-  });
-
-  it("上传会话 401 保持为可重试失败，不转换为本地 Data URL", async () => {
-    const file = new File(["image"], "one.png", { type: "image/png" });
-
-    await expect(resolveReferenceImageUpload(
-      file,
-      async () => Response.json({ code: "api.unauthorized" }, { status: 401 }),
-      async () => {
-        throw new Error("must not read Base64");
-      },
-    )).resolves.toEqual({
-      status: "failed",
-      error: { code: "api.unauthorized" },
-      httpStatus: 401,
+    await expect(resolveReferenceImageUpload(file, readDataUrl)).resolves.toEqual({
+      status: "local",
+      dataUrl: "data:image/png;base64,aW1hZ2U=",
     });
   });
 

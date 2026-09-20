@@ -11,13 +11,14 @@ import {
   CircleAlert,
   Clapperboard,
   Download,
+  Eye,
+  EyeOff,
   ExternalLink,
   Film,
   GripVertical,
   ImagePlus,
+  KeyRound,
   LoaderCircle,
-  LockKeyhole,
-  LogOut,
   Move,
   Play,
   Share2,
@@ -76,11 +77,11 @@ import {
 } from "@/lib/video/task-recovery";
 import { useI18n } from "@/lib/i18n/context";
 import {
-  isSessionUnauthorizedResponse,
-  shouldPreserveActiveTaskOnUnauthorized,
-  type AuthGateState,
-  type UnauthorizedRequestSource,
-} from "@/lib/auth/types";
+  clearStoredSeedanceApiKey,
+  getStoredSeedanceApiKeySnapshot,
+  saveStoredSeedanceApiKey,
+  subscribeToStoredSeedanceApiKey,
+} from "@/lib/client/api-key-storage";
 import { LanguageSwitcher } from "@/components/studio/language-switcher";
 import { InstallPrompt } from "@/components/pwa/install-prompt";
 
@@ -120,11 +121,7 @@ function getCurrentTimestamp(): number {
   return Date.now();
 }
 
-export function VideoGenerator({
-  initialAuthState = "disabled",
-}: {
-  initialAuthState?: AuthGateState;
-}) {
+export function VideoGenerator() {
   const { t } = useI18n();
 
   // Localize an API error body ({ code, params, detail }) using the shared dictionary.
@@ -147,10 +144,15 @@ export function VideoGenerator({
   const [referenceError, setReferenceError] = useState<string>();
   const [draggedImageId, setDraggedImageId] = useState<string>();
   const [task, setTask] = useState<VideoTask>({ taskId: "", status: "idle" });
-  const [authState, setAuthState] = useState<AuthGateState>(initialAuthState);
-  const [authPassword, setAuthPassword] = useState("");
-  const [authError, setAuthError] = useState<string>();
-  const [authPending, setAuthPending] = useState(false);
+  const apiKey = useSyncExternalStore(
+    subscribeToStoredSeedanceApiKey,
+    getStoredSeedanceApiKeySnapshot,
+    () => "",
+  );
+  const [apiKeyDraft, setApiKeyDraft] = useState<string>();
+  const [apiKeyVisible, setApiKeyVisible] = useState(false);
+  const [apiKeyNotice, setApiKeyNotice] = useState<string>();
+  const [apiKeyError, setApiKeyError] = useState<string>();
   const [advancedOpenPreference, setAdvancedOpenPreference] = useState<boolean | null>(null);
   const [restoredTask, setRestoredTask] = useState(false);
   const isOnline = useSyncExternalStore(subscribeToOnlineStatus, getOnlineSnapshot, () => true);
@@ -208,53 +210,35 @@ export function VideoGenerator({
     };
   }, []);
 
-  async function handleLogin(event: FormEvent<HTMLFormElement>) {
+  function handleApiKeySave(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (authPending || !authPassword) return;
-
-    setAuthPending(true);
-    setAuthError(undefined);
-    try {
-      const response = await fetch("/api/auth/login", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ password: authPassword }),
-      });
-      const payload = await response.json() as ApiErrorBody;
-      if (!response.ok) {
-        setAuthError(localizeApiError(payload, "api.unauthorized"));
-        return;
-      }
-
-      setAuthPassword("");
-      setAuthState("authenticated");
-    } catch {
-      setAuthError(t("api.queryFailed"));
-    } finally {
-      setAuthPending(false);
+    const normalizedKey = (apiKeyDraft ?? apiKey).trim();
+    if (!normalizedKey) {
+      setApiKeyError(t("api.apiKeyRequired"));
+      setApiKeyNotice(undefined);
+      return;
     }
+
+    if (!saveStoredSeedanceApiKey(normalizedKey)) {
+      setApiKeyError(t("api.apiKeyStorageFailed"));
+      setApiKeyNotice(undefined);
+      return;
+    }
+
+    setApiKeyDraft(undefined);
+    setApiKeyError(undefined);
+    setApiKeyNotice(t("apiKey.saved"));
   }
 
-  async function handleLogout() {
+  function handleApiKeyClear() {
     stopPolling();
     submitAbortRef.current?.abort();
     clearTrackedActiveTask();
+    clearStoredSeedanceApiKey();
+    setApiKeyDraft(undefined);
     setTask({ taskId: "", status: "idle" });
-    try {
-      await fetch("/api/auth/logout", { method: "POST" });
-    } finally {
-      setAuthState("unauthenticated");
-    }
-  }
-
-  function handleUnauthorized(source: UnauthorizedRequestSource) {
-    stopPolling();
-    if (!shouldPreserveActiveTaskOnUnauthorized(source)) {
-      clearTrackedActiveTask();
-      setTask({ taskId: "", status: "idle" });
-    }
-    setAuthState("unauthenticated");
-    setAuthError(t("api.unauthorized"));
+    setApiKeyError(undefined);
+    setApiKeyNotice(t("apiKey.cleared"));
   }
 
   const isGenerating = task.status === "submitting" || task.status === "queued" || task.status === "processing";
@@ -308,12 +292,6 @@ export function VideoGenerator({
     const result = await resolveReferenceImageUpload(file);
     if (!isMountedRef.current) return;
     updateReferenceImages((images) => applyReferenceImageUploadResult(images, id, result));
-    if (
-      result.status === "failed"
-      && isSessionUnauthorizedResponse(result.httpStatus ?? 0, result.error.code)
-    ) {
-      handleUnauthorized("upload");
-    }
   }
 
   function retryReferenceImage(id: string) {
@@ -354,7 +332,12 @@ export function VideoGenerator({
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (isGenerating || !isOnline || !prompt.trim() || !referenceImagesReady) return;
+    if (isGenerating || !isOnline || !prompt.trim() || !referenceImagesReady || !apiKey) {
+      if (!apiKey) {
+        setApiKeyError(t("api.apiKeyRequired"));
+      }
+      return;
+    }
     stopPolling();
     clearTrackedActiveTask();
     setTask({ taskId: "", status: "submitting" });
@@ -384,7 +367,10 @@ export function VideoGenerator({
     try {
       const response = await fetch("/api/generate", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          "x-seedance-api-key": apiKey,
+        },
         signal: controller.signal,
         body: JSON.stringify({
           prompt: finalPrompt,
@@ -397,10 +383,6 @@ export function VideoGenerator({
       });
       const payload = (await response.json()) as { taskId?: string } & ApiErrorBody;
       if (!isMountedRef.current || controller.signal.aborted) return;
-      if (isSessionUnauthorizedResponse(response.status, payload.code)) {
-        handleUnauthorized("generate");
-        return;
-      }
       if (!response.ok || !payload.taskId) {
         throw new Error(localizeApiError(payload, "api.createFailed"));
       }
@@ -423,6 +405,7 @@ export function VideoGenerator({
 
   async function pollTask(taskId: string) {
     if (!isMountedRef.current) return;
+    if (!apiKey) return;
     if (pollAbortRef.current) return;
     if (typeof navigator !== "undefined" && !navigator.onLine) {
       scheduleTaskPoll(taskId);
@@ -433,6 +416,7 @@ export function VideoGenerator({
     try {
       const response = await fetch(`/api/task/${encodeURIComponent(taskId)}`, {
         cache: "no-store",
+        headers: { "x-seedance-api-key": apiKey },
         signal: controller.signal,
       });
       let payload: ({
@@ -454,10 +438,6 @@ export function VideoGenerator({
         return;
       }
       if (!isMountedRef.current || controller.signal.aborted) return;
-      if (isSessionUnauthorizedResponse(response.status, payload?.code)) {
-        handleUnauthorized("task");
-        return;
-      }
       if (!response.ok) {
         if (isTransientTaskPollingResponse(response.status, payload?.code)) {
           setTask((currentTask) => currentTask.taskId === taskId
@@ -520,6 +500,7 @@ export function VideoGenerator({
   }
 
   const recoverStoredTask = useEffectEvent(async () => {
+    if (!apiKey) return;
     const controller = new AbortController();
     pollAbortRef.current = controller;
 
@@ -527,6 +508,11 @@ export function VideoGenerator({
       await recoverActiveVideoTask({
         signal: controller.signal,
         online: typeof navigator === "undefined" || navigator.onLine,
+        fetchTask: (input, init) => {
+          const headers = new Headers(init.headers);
+          headers.set("x-seedance-api-key", apiKey);
+          return fetch(input, { ...init, headers });
+        },
         onRestore: (storedTask: PersistedVideoTask) => {
           if (!isMountedRef.current || controller.signal.aborted) return;
           activeTaskCreatedAtRef.current = storedTask.createdAt;
@@ -563,7 +549,9 @@ export function VideoGenerator({
           if (isMountedRef.current && !controller.signal.aborted) scheduleTaskPoll(taskId);
         },
         onUnauthorized: () => {
-          if (isMountedRef.current && !controller.signal.aborted) handleUnauthorized("task");
+          if (isMountedRef.current && !controller.signal.aborted) {
+            setApiKeyError(t("api.apiKeyRequired"));
+          }
         },
         onTransientError: (body, error) => {
           if (!isMountedRef.current || controller.signal.aborted) return;
@@ -590,24 +578,9 @@ export function VideoGenerator({
   });
 
   useEffect(() => {
-    if (authState === "unauthenticated" || authState === "unconfigured") return;
-
     stopPolling();
-    void recoverStoredTask();
-  }, [authState]);
-
-  if (authState === "unauthenticated" || authState === "unconfigured") {
-    return (
-      <AuthGate
-        state={authState}
-        password={authPassword}
-        error={authError}
-        pending={authPending}
-        onPasswordChange={setAuthPassword}
-        onSubmit={handleLogin}
-      />
-    );
-  }
+    if (apiKey) void recoverStoredTask();
+  }, [apiKey]);
 
   return (
     <main className="studio-shell app-shell has-mobile-action text-[var(--text)]">
@@ -629,22 +602,27 @@ export function VideoGenerator({
             </div>
             <InstallPrompt />
             <LanguageSwitcher />
-            {authState === "authenticated" && (
-              <button
-                className="studio-icon-button"
-                type="button"
-                onClick={() => void handleLogout()}
-                aria-label={t("auth.logout")}
-                title={t("auth.logout")}
-              >
-                <LogOut className="size-3.5" />
-              </button>
-            )}
           </div>
         </header>
 
         <NetworkStatusBanner isOnline={isOnline} />
         <TaskRecoveryNotice restored={restoredTask} />
+
+        <ApiKeySettings
+          value={apiKeyDraft ?? apiKey}
+          visible={apiKeyVisible}
+          notice={apiKeyNotice}
+          error={apiKeyError}
+          hasSavedKey={Boolean(apiKey)}
+          onChange={(value) => {
+            setApiKeyDraft(value);
+            setApiKeyNotice(undefined);
+            setApiKeyError(undefined);
+          }}
+          onToggleVisibility={() => setApiKeyVisible((current) => !current)}
+          onSubmit={handleApiKeySave}
+          onClear={handleApiKeyClear}
+        />
 
         <div className="mb-9 max-w-3xl sm:mb-11">
           <p className="studio-eyebrow mb-3">{t("hero.eyebrow")}</p>
@@ -827,7 +805,7 @@ export function VideoGenerator({
               <div className="studio-mobile-submit-bar border-t border-[var(--line)]">
                 <MobileSubmitAction
                   status={task.status}
-                  disabled={!prompt.trim() || isGenerating || !isOnline || !referenceImagesReady}
+                  disabled={!prompt.trim() || isGenerating || !isOnline || !referenceImagesReady || !apiKey}
                   onViewResult={() => resultPanelRef.current?.scrollIntoView({ behavior: "smooth", block: "start" })}
                 />
               </div>
@@ -877,6 +855,88 @@ export function VideoGenerator({
         </footer>
       </div>
     </main>
+  );
+}
+
+type ApiKeySettingsProps = {
+  value: string;
+  visible: boolean;
+  notice?: string;
+  error?: string;
+  hasSavedKey: boolean;
+  onChange: (value: string) => void;
+  onToggleVisibility: () => void;
+  onSubmit: (event: FormEvent<HTMLFormElement>) => void;
+  onClear: () => void;
+};
+
+export function ApiKeySettings({
+  value,
+  visible,
+  notice,
+  error,
+  hasSavedKey,
+  onChange,
+  onToggleVisibility,
+  onSubmit,
+  onClear,
+}: ApiKeySettingsProps) {
+  const { t } = useI18n();
+
+  return (
+    <section className="studio-panel mb-7 overflow-hidden" aria-labelledby="api-key-heading">
+      <div className="flex items-center justify-between gap-3 border-b border-[var(--line)] px-4 py-4 sm:px-[22px]">
+        <div className="flex items-center gap-2.5">
+          <KeyRound className="size-4 text-[var(--text-2)]" aria-hidden="true" />
+          <h2 id="api-key-heading" className="studio-panel-title">{t("apiKey.heading")}</h2>
+        </div>
+        <span className={`studio-chip ${hasSavedKey ? "" : "opacity-70"}`}>
+          {hasSavedKey ? t("apiKey.status.ready") : t("apiKey.status.required")}
+        </span>
+      </div>
+      <form className="studio-form-section" onSubmit={onSubmit}>
+        <label className="studio-label mb-2 block" htmlFor="seedance-api-key">
+          {t("apiKey.label")}
+        </label>
+        <div className="flex flex-col gap-2 sm:flex-row">
+          <div className="relative min-w-0 flex-1">
+            <input
+              id="seedance-api-key"
+              className="studio-textarea min-h-0 w-full py-3 pr-11"
+              type={visible ? "text" : "password"}
+              autoComplete="off"
+              spellCheck={false}
+              value={value}
+              onChange={(event) => onChange(event.target.value)}
+              placeholder={t("apiKey.placeholder")}
+              aria-describedby="seedance-api-key-note"
+            />
+            <button
+              className="studio-icon-button absolute right-2 top-1/2 -translate-y-1/2"
+              type="button"
+              onClick={onToggleVisibility}
+              aria-label={visible ? t("apiKey.hide") : t("apiKey.show")}
+              title={visible ? t("apiKey.hide") : t("apiKey.show")}
+            >
+              {visible ? <EyeOff className="size-3.5" /> : <Eye className="size-3.5" />}
+            </button>
+          </div>
+          <button className="studio-submit shrink-0 px-5" type="submit" disabled={!value.trim()}>
+            {hasSavedKey ? t("apiKey.update") : t("apiKey.save")}
+          </button>
+          {hasSavedKey && (
+            <button className="studio-secondary-button shrink-0" type="button" onClick={onClear}>
+              {t("apiKey.clear")}
+            </button>
+          )}
+        </div>
+        <p id="seedance-api-key-note" className="mt-3 text-xs leading-5 text-[var(--text-3)]">
+          {t("apiKey.localOnly")}
+        </p>
+        {notice && <p className="mt-2 text-xs text-emerald-700" role="status">{notice}</p>}
+        {error && <p className="mt-2 text-xs text-red-600" role="alert">{error}</p>}
+      </form>
+    </section>
   );
 }
 
@@ -1093,91 +1153,6 @@ export function ReferenceImageControls({
         </button>
       </div>
     </>
-  );
-}
-
-type AuthGateProps = {
-  state: Extract<AuthGateState, "unauthenticated" | "unconfigured">;
-  password: string;
-  error?: string;
-  pending: boolean;
-  onPasswordChange: (value: string) => void;
-  onSubmit: (event: FormEvent<HTMLFormElement>) => void;
-};
-
-function AuthGate({
-  state,
-  password,
-  error,
-  pending,
-  onPasswordChange,
-  onSubmit,
-}: AuthGateProps) {
-  const { t } = useI18n();
-
-  return (
-    <main className="studio-shell app-shell text-[var(--text)]">
-      <div className="mx-auto w-full max-w-[660px]">
-        <header className="studio-topbar mb-9 flex items-center justify-between gap-4 pb-5 sm:mb-12">
-          <div className="flex items-center gap-3">
-            <div className="studio-mark flex size-9 items-center justify-center" aria-hidden="true">
-              <Clapperboard className="size-4" strokeWidth={1.6} />
-            </div>
-            <div>
-              <p className="text-sm font-medium tracking-tight text-[var(--text)]">Seedance Studio</p>
-              <p className="mt-0.5 text-xs text-[var(--text-3)]">{t("topbar.subtitle")}</p>
-            </div>
-          </div>
-          <LanguageSwitcher />
-        </header>
-
-        <section className="studio-panel overflow-hidden">
-          <div className="studio-form-section text-center">
-            <div className="studio-mark mx-auto flex size-11 items-center justify-center" aria-hidden="true">
-              <LockKeyhole className="size-5" strokeWidth={1.6} />
-            </div>
-            <h1 className="mt-5 text-xl font-medium tracking-tight text-[var(--text)]">
-              {state === "unconfigured" ? t("auth.unconfiguredTitle") : t("auth.title")}
-            </h1>
-            <p className="mx-auto mt-2 max-w-md text-sm leading-6 text-[var(--text-2)]">
-              {state === "unconfigured"
-                ? t("auth.unconfiguredDescription")
-                : t("auth.description")}
-            </p>
-
-            {state === "unauthenticated" && (
-              <form className="mx-auto mt-6 max-w-sm text-left" onSubmit={onSubmit}>
-                <label className="studio-label mb-2 block" htmlFor="access-password">
-                  {t("auth.passwordLabel")}
-                </label>
-                <input
-                  id="access-password"
-                  className="studio-textarea min-h-0 w-full py-3"
-                  type="password"
-                  autoComplete="current-password"
-                  value={password}
-                  onChange={(event) => onPasswordChange(event.target.value)}
-                  placeholder={t("auth.passwordPlaceholder")}
-                  disabled={pending}
-                  required
-                />
-                {error && (
-                  <p className="mt-2 text-xs text-red-600" role="alert">{error}</p>
-                )}
-                <button
-                  className="studio-submit mt-4 flex w-full items-center justify-center gap-2"
-                  type="submit"
-                  disabled={pending || !password}
-                >
-                  {pending && <LoaderCircle className="size-4 animate-spin" />}
-                  {pending ? t("auth.submitting") : t("auth.submit")}
-                </button>
-              </form>
-            )}
-          </div>
-        </section>
-      </div>
-    </main>
   );
 }
 

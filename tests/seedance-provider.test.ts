@@ -8,16 +8,16 @@ const createResponse = (body: unknown, status = 200) =>
     headers: { "content-type": "application/json" },
   });
 
+const requestKey = "test-request-key";
+
 describe("SeedanceProvider", () => {
   const fetchMock = vi.fn();
 
   beforeEach(() => {
-    process.env.SEEDANCE_API_KEY = "test-server-only-key";
     vi.stubGlobal("fetch", fetchMock);
   });
 
   afterEach(() => {
-    delete process.env.SEEDANCE_API_KEY;
     fetchMock.mockReset();
     vi.unstubAllGlobals();
   });
@@ -25,7 +25,7 @@ describe("SeedanceProvider", () => {
   it("将文生视频请求映射到方舟任务接口", async () => {
     fetchMock.mockResolvedValueOnce(createResponse({ id: "cgt-text" }));
 
-    const result = await new SeedanceProvider().createTask({
+    const result = await new SeedanceProvider(requestKey).createTask({
       provider: "seedance",
       model: "",
       prompt: "一只橘猫在窗边打盹",
@@ -40,7 +40,7 @@ describe("SeedanceProvider", () => {
       expect.objectContaining({
         method: "POST",
         headers: expect.objectContaining({
-          Authorization: "Bearer test-server-only-key",
+          Authorization: `Bearer ${requestKey}`,
           "Content-Type": "application/json",
         }),
         body: JSON.stringify({
@@ -55,10 +55,26 @@ describe("SeedanceProvider", () => {
     );
   });
 
+  it("只使用当前请求传入的 Key，而不读取部署端环境变量", async () => {
+    fetchMock.mockResolvedValueOnce(createResponse({ id: "cgt-request-key" }));
+
+    await new SeedanceProvider("request-scoped-key").createTask({
+      provider: "seedance",
+      model: "",
+      prompt: "请求级密钥测试",
+    });
+
+    expect(fetchMock.mock.calls[0][1]).toEqual(expect.objectContaining({
+      headers: expect.objectContaining({
+        Authorization: "Bearer request-scoped-key",
+      }),
+    }));
+  });
+
   it("使用配置好的火山方舟推理接入点", async () => {
     fetchMock.mockResolvedValueOnce(createResponse({ id: "cgt-selected-model" }));
 
-    await new SeedanceProvider().createTask({
+    await new SeedanceProvider(requestKey).createTask({
       provider: "seedance",
       model: "ep-20260829185420-qnfvz",
       prompt: "海边日落",
@@ -73,7 +89,7 @@ describe("SeedanceProvider", () => {
     fetchMock.mockResolvedValueOnce(createResponse({ id: "cgt-image" }));
     const referenceImageUrl = "data:image/png;base64,aGVsbG8=";
 
-    await new SeedanceProvider().createTask({
+    await new SeedanceProvider(requestKey).createTask({
       provider: "seedance",
       model: "",
       prompt: "让画面中的猫眨眼",
@@ -109,7 +125,7 @@ describe("SeedanceProvider", () => {
       "data:image/png;base64,c2Vjb25k",
     ];
 
-    await new SeedanceProvider().createTask({
+    await new SeedanceProvider(requestKey).createTask({
       provider: "seedance",
       model: "ep-20260829185420-qnfvz",
       prompt: "让两个角色在雨中相遇",
@@ -134,7 +150,7 @@ describe("SeedanceProvider", () => {
     }, 400));
 
     await expect(
-      new SeedanceProvider().createTask({
+      new SeedanceProvider(requestKey).createTask({
         provider: "seedance",
         model: "",
         prompt: "测试",
@@ -157,12 +173,29 @@ describe("SeedanceProvider", () => {
       },
     }, 400));
 
-    await expect(new SeedanceProvider().createTask({
+    await expect(new SeedanceProvider(requestKey).createTask({
       provider: "seedance",
       model: "",
       prompt: "测试",
     })).rejects.toMatchObject({
       detail: ": bad image [image data hidden] in request",
+    });
+  });
+
+  it("从上游错误详情中移除当前请求的 API Key", async () => {
+    fetchMock.mockResolvedValueOnce(createResponse({
+      error: {
+        code: "InvalidParameter",
+        message: `the request included ${requestKey}`,
+      },
+    }, 400));
+
+    await expect(new SeedanceProvider(requestKey).createTask({
+      provider: "seedance",
+      model: "",
+      prompt: "测试",
+    })).rejects.toMatchObject({
+      detail: ": the request included [api key hidden]",
     });
   });
 
@@ -175,7 +208,7 @@ describe("SeedanceProvider", () => {
       }),
     );
 
-    await expect(new SeedanceProvider().getTask("cgt-complete")).resolves.toEqual({
+    await expect(new SeedanceProvider(requestKey).getTask("cgt-complete")).resolves.toEqual({
       taskId: "cgt-complete",
       status: "succeeded",
       videoUrl: "https://example.com/video.mp4",
@@ -191,7 +224,7 @@ describe("SeedanceProvider", () => {
       }),
     );
 
-    await expect(new SeedanceProvider().getTask("cgt-incomplete")).rejects.toEqual(
+    await expect(new SeedanceProvider(requestKey).getTask("cgt-incomplete")).rejects.toEqual(
       new VideoProviderError("api.providerNoVideoUrl"),
     );
   });
@@ -205,7 +238,7 @@ describe("SeedanceProvider", () => {
       }),
     );
 
-    await expect(new SeedanceProvider().getTask("cgt-empty-url")).rejects.toEqual(
+    await expect(new SeedanceProvider(requestKey).getTask("cgt-empty-url")).rejects.toEqual(
       new VideoProviderError("api.providerNoVideoUrl"),
     );
   });

@@ -77,15 +77,9 @@ const generationLimiter = new InMemoryRateLimiter({
   maxKeys: 5_000,
 });
 
-const loginLimiter = new InMemoryRateLimiter({
-  minuteLimit: 5,
-  hourLimit: 30,
-  maxKeys: 5_000,
-});
-
-const uploadLimiter = new InMemoryRateLimiter({
-  minuteLimit: 20,
-  hourLimit: 120,
+const taskLimiter = new InMemoryRateLimiter({
+  minuteLimit: 60,
+  hourLimit: 600,
   maxKeys: 5_000,
 });
 
@@ -111,12 +105,8 @@ export function enforceGenerationRateLimit(request: Request): Response | null {
   return enforceRateLimit(generationLimiter, request);
 }
 
-export function enforceLoginRateLimit(request: Request): Response | null {
-  return enforceRateLimit(loginLimiter, request);
-}
-
-export function enforceUploadRateLimit(request: Request): Response | null {
-  return enforceRateLimit(uploadLimiter, request);
+export function enforceTaskRateLimit(request: Request): Response | null {
+  return enforceRateLimit(taskLimiter, request);
 }
 
 function enforceRateLimit(limiter: InMemoryRateLimiter, request: Request): Response | null {

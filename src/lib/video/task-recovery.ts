@@ -5,7 +5,7 @@ import {
   type ActiveTaskStorage,
   type PersistedVideoTask,
 } from "@/lib/video/task-storage";
-import { isSessionUnauthorizedResponse } from "@/lib/auth/types";
+import { isApiKeyUnauthorizedResponse } from "@/lib/client/api-key-storage";
 
 export type RecoveredVideoTask = {
   taskId: string;
@@ -22,7 +22,7 @@ export type RecoveryApiErrorBody = {
 
 type TaskFetcher = (
   input: string,
-  init: { cache: "no-store"; signal?: AbortSignal },
+  init: RequestInit,
 ) => Promise<Response>;
 
 type ActiveTaskRecoveryOptions = {
@@ -99,7 +99,7 @@ export async function recoverActiveVideoTask({
     }
     if (signal?.aborted) return true;
     const errorBody = payload as RecoveryApiErrorBody;
-    if (isSessionUnauthorizedResponse(response.status, errorBody.code)) {
+    if (isApiKeyUnauthorizedResponse(response.status, errorBody.code)) {
       onUnauthorized();
       return true;
     }
@@ -149,6 +149,6 @@ export function isTransientTaskPollingStatus(status: number): boolean {
 }
 
 export function isTransientTaskPollingResponse(status: number, code?: string): boolean {
-  if (isSessionUnauthorizedResponse(status, code)) return false;
+  if (isApiKeyUnauthorizedResponse(status, code)) return false;
   return status !== 400 && status !== 404 && status !== 410;
 }

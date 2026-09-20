@@ -74,8 +74,6 @@ describe("service worker", () => {
   it.each([
     ["API polling", request("https://studio.test/api/task/task-1")],
     ["API root", request("https://studio.test/api")],
-    ["upload API", request("https://studio.test/api/upload")],
-    ["auth API", request("https://studio.test/api/auth/login")],
     [
       "authorized static request",
       request("https://studio.test/_next/static/app.js", {

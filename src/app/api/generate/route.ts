@@ -1,7 +1,10 @@
 import { Buffer } from "node:buffer";
 
-import { requireApiAuth } from "@/lib/auth/guard";
 import { enforceGenerationRateLimit } from "@/lib/security/rate-limit";
+import {
+  readSeedanceApiKey,
+  seedanceApiKeyErrorResponse,
+} from "@/lib/security/api-key";
 import {
   aspectRatioOptions,
   defaultDuration,
@@ -25,8 +28,8 @@ export const runtime = "nodejs";
 const imageDataUrlPattern = /^data:image\/(png|jpeg|webp);base64,([A-Za-z0-9+/]+={0,2})$/;
 
 export async function POST(request: Request): Promise<Response> {
-  const authError = requireApiAuth(request);
-  if (authError) return authError;
+  const apiKey = readSeedanceApiKey(request);
+  if (!apiKey.ok) return seedanceApiKeyErrorResponse(apiKey);
 
   const payload = await parseRequest(request);
 
@@ -86,7 +89,7 @@ export async function POST(request: Request): Promise<Response> {
   if (rateLimitError) return rateLimitError;
 
   try {
-    const task = await new SeedanceProvider().createTask({
+    const task = await new SeedanceProvider(apiKey.apiKey).createTask({
       provider: "seedance",
       model: modelResolution.model,
       prompt,

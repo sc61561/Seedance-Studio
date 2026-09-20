@@ -40,6 +40,8 @@ export class VideoProviderError extends Error {
 }
 
 export class SeedanceProvider implements VideoProvider {
+  constructor(private readonly apiKey: string) {}
+
   async createTask(input: CreateVideoInput): Promise<CreateVideoTaskResult> {
     const model = input.model || defaultSeedanceModel();
     const content: Array<Record<string, unknown>> = [
@@ -105,17 +107,11 @@ export class SeedanceProvider implements VideoProvider {
   }
 
   private async request(path: string, init: RequestInit): Promise<Response> {
-    const apiKey = process.env.SEEDANCE_API_KEY;
-
-    if (!apiKey) {
-      throw new VideoProviderError("api.providerNoKey", 503);
-    }
-
     try {
       const response = await fetch(`${arkBaseUrl}${path}`, {
         ...init,
         headers: {
-          Authorization: `Bearer ${apiKey}`,
+          Authorization: `Bearer ${this.apiKey}`,
           "Content-Type": "application/json",
         },
         cache: "no-store",
@@ -124,7 +120,7 @@ export class SeedanceProvider implements VideoProvider {
 
       if (!response.ok) {
         const errorPayload = await response.json().catch(() => null) as ArkErrorResponse | null;
-        throw errorForStatus(response.status, errorPayload);
+        throw errorForStatus(response.status, errorPayload, this.apiKey);
       }
 
       return response;
@@ -155,7 +151,11 @@ function normalizeStatus(status: string | undefined): VideoTaskState {
   }
 }
 
-function errorForStatus(statusCode: number, payload?: ArkErrorResponse | null): VideoProviderError {
+function errorForStatus(
+  statusCode: number,
+  payload?: ArkErrorResponse | null,
+  apiKey?: string,
+): VideoProviderError {
   if (statusCode === 401 || statusCode === 403) {
     return new VideoProviderError("api.providerAuthFailed", statusCode);
   }
@@ -165,7 +165,7 @@ function errorForStatus(statusCode: number, payload?: ArkErrorResponse | null): 
   }
 
   const code = payload?.error?.code?.trim();
-  const detail = sanitizeErrorDetail(payload?.error?.message);
+  const detail = sanitizeErrorDetail(payload?.error?.message, apiKey);
   const label = code ? `HTTP ${statusCode}, ${code}` : `HTTP ${statusCode}`;
   return new VideoProviderError(
     "api.providerHttpError",
@@ -175,7 +175,7 @@ function errorForStatus(statusCode: number, payload?: ArkErrorResponse | null): 
   );
 }
 
-function sanitizeErrorDetail(value: string | undefined): string | undefined {
+function sanitizeErrorDetail(value: string | undefined, apiKey?: string): string | undefined {
   const detail = value
     ?.replace(/Bearer\s+\S+/gi, "Bearer [hidden]")
     .replace(/data:image\/(?:png|jpe?g|webp);base64,[A-Za-z0-9+/=]+/gi, "[image data hidden]")
@@ -183,5 +183,9 @@ function sanitizeErrorDetail(value: string | undefined): string | undefined {
     .trim();
 
   if (!detail) return undefined;
-  return detail.slice(0, 240);
+
+  const redacted = apiKey
+    ? detail.split(apiKey).join("[api key hidden]")
+    : detail;
+  return redacted.slice(0, 240);
 }

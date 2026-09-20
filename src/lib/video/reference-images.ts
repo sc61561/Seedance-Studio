@@ -21,8 +21,6 @@ export type ReferenceImageUploadResult =
   | { status: "local"; dataUrl: string }
   | { status: "failed"; error: ReferenceImageUploadError; httpStatus?: number };
 
-type UploadFetcher = (input: string, init: RequestInit) => Promise<Response>;
-
 export function prepareReferenceImage(
   file: File,
   id: string,
@@ -78,28 +76,10 @@ export function applyReferenceImageUploadResult(
 
 export async function resolveReferenceImageUpload(
   file: File,
-  fetchUpload: UploadFetcher = fetch,
   readDataUrl: (file: File) => Promise<string> = readFileAsDataUrl,
 ): Promise<ReferenceImageUploadResult> {
   try {
-    const formData = new FormData();
-    formData.set("file", file);
-    const response = await fetchUpload("/api/upload", { method: "POST", body: formData });
-    const payload = await readUploadResponse(response);
-
-    if (response.ok && typeof payload.url === "string" && payload.url) {
-      return { status: "uploaded", remoteUrl: payload.url };
-    }
-
-    if (response.status === 503 && payload.code === "api.storageNotConfigured") {
-      return { status: "local", dataUrl: await readDataUrl(file) };
-    }
-
-    return {
-      status: "failed",
-      error: errorFromUploadPayload(payload),
-      httpStatus: response.status,
-    };
+    return { status: "local", dataUrl: await readDataUrl(file) };
   } catch {
     return { status: "failed", error: { code: "api.uploadFailed" } };
   }
@@ -157,30 +137,6 @@ export function moveReferenceImage(
   }
 
   return reorderReferenceImages(images, sourceId, images[targetIndex].id);
-}
-
-async function readUploadResponse(response: Response): Promise<Record<string, unknown>> {
-  try {
-    const payload: unknown = await response.json();
-    return payload && typeof payload === "object" && !Array.isArray(payload)
-      ? payload as Record<string, unknown>
-      : {};
-  } catch {
-    return {};
-  }
-}
-
-function errorFromUploadPayload(payload: Record<string, unknown>): ReferenceImageUploadError {
-  return {
-    code: typeof payload.code === "string" ? payload.code : "api.uploadFailed",
-    ...(isErrorParams(payload.params) ? { params: payload.params } : {}),
-    ...(typeof payload.detail === "string" ? { detail: payload.detail } : {}),
-  };
-}
-
-function isErrorParams(value: unknown): value is Record<string, string | number> {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
-  return Object.values(value).every((item) => typeof item === "string" || typeof item === "number");
 }
 
 function readFileAsDataUrl(file: File): Promise<string> {

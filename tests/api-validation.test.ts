@@ -5,7 +5,10 @@ import { POST } from "@/app/api/generate/route";
 const requestFor = (body: unknown) =>
   new Request("http://localhost/api/generate", {
     method: "POST",
-    headers: { "content-type": "application/json" },
+    headers: {
+      "content-type": "application/json",
+      "x-seedance-api-key": "test-request-key",
+    },
     body: JSON.stringify(body),
   });
 
@@ -85,6 +88,7 @@ describe("POST /api/generate", () => {
   });
 
   it("接受 HTTPS 上传后的参考图 URL", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json({ id: "cgt-https-ref" })));
     const response = await POST(
       requestFor({
         prompt: "生成一段视频",
@@ -92,12 +96,11 @@ describe("POST /api/generate", () => {
       }),
     );
 
-    expect(response.status).toBe(503);
-    await expect(response.json()).resolves.toEqual({ code: "api.providerNoKey" });
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({ taskId: "cgt-https-ref" });
   });
 
   it("保留上游鉴权错误码，供客户端区别于本地会话过期", async () => {
-    vi.stubEnv("SEEDANCE_API_KEY", "test-server-key");
     vi.stubGlobal("fetch", vi.fn(async () => Response.json({
       error: { code: "Unauthorized", message: "invalid upstream key" },
     }, { status: 401 })));
@@ -105,6 +108,7 @@ describe("POST /api/generate", () => {
       method: "POST",
       headers: {
         "content-type": "application/json",
+        "x-seedance-api-key": "test-request-key",
         "x-forwarded-for": "203.0.113.123",
       },
       body: JSON.stringify({ prompt: "生成一段视频" }),
@@ -183,6 +187,7 @@ describe("POST /api/generate", () => {
   });
 
   it("允许为已配置的推理接入点选择 1080p", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json({ id: "cgt-1080p" })));
     const response = await POST(
       requestFor({
         prompt: "生成一段视频",
@@ -191,11 +196,12 @@ describe("POST /api/generate", () => {
       }),
     );
 
-    expect(response.status).toBe(503);
-    await expect(response.json()).resolves.toEqual({ code: "api.providerNoKey" });
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({ taskId: "cgt-1080p" });
   });
 
   it("允许在 2 到 30 秒之间选择任意整数时长", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json({ id: "cgt-duration" })));
     const response = await POST(
       requestFor({
         prompt: "生成一段视频",
@@ -204,8 +210,8 @@ describe("POST /api/generate", () => {
       }),
     );
 
-    expect(response.status).toBe(503);
-    await expect(response.json()).resolves.toEqual({ code: "api.providerNoKey" });
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({ taskId: "cgt-duration" });
   });
 
   it.each([1, 31, 2.5])("拒绝范围外或非整数的视频时长 %s", async (duration) => {

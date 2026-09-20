@@ -146,7 +146,7 @@ describe("active task recovery controller", () => {
     expect(storage.getItem(activeVideoTaskStorageKey)).toBeNull();
   });
 
-  it("retains active storage and enters the auth gate on a 401", async () => {
+  it("retains active storage and reports a missing API key on a 401", async () => {
     const storage = new MemoryStorage();
     seedActiveTask(storage);
     const onUnauthorized = vi.fn();
@@ -157,7 +157,7 @@ describe("active task recovery controller", () => {
       now,
       online: true,
       fetchTask: vi.fn(async () => Response.json(
-        { code: "api.unauthorized" },
+        { code: "api.apiKeyRequired" },
         { status: 401 },
       )),
       onRestore: vi.fn(),

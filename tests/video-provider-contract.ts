@@ -6,7 +6,7 @@ import type {
   VideoTaskStatus,
 } from "@/lib/video/types";
 
-const provider: VideoProvider = new SeedanceProvider();
+const provider: VideoProvider = new SeedanceProvider("contract-test-key");
 
 const createInput: CreateVideoInput = {
   provider: "seedance",

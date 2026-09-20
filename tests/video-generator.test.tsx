@@ -5,6 +5,7 @@ import {
   NetworkStatusBanner,
   GeneratingStateDescription,
   MobileSubmitAction,
+  ApiKeySettings,
   ReferenceImageControls,
   TaskRecoveryNotice,
   VideoSuccessResult,
@@ -23,7 +24,7 @@ describe("VideoGenerator", () => {
     expect(markup).toContain("请输入你想生成的视频内容");
     expect(markup).toContain('maxLength="4000"');
     expect(markup).toContain("已配置模型");
-    expect(markup).toContain("火山方舟接入点已配置");
+    expect(markup).toContain("按请求使用用户 Key");
     expect(markup).not.toContain("选择模型");
     expect(markup).toContain("分辨率");
     expect(markup).toContain("画面比例");
@@ -130,27 +131,38 @@ describe("VideoGenerator", () => {
     expect(markup).toContain("简体中文");
   });
 
-  it("认证启用但未登录时只显示访问密码门禁", () => {
+  it("默认渲染隐藏的 BYOK API Key 设置，并提示只保存在当前设备", () => {
     const markup = renderToStaticMarkup(
       <I18nProvider>
-        <VideoGenerator initialAuthState="unauthenticated" />
+        <VideoGenerator />
       </I18nProvider>,
     );
 
-    expect(markup).toContain("访问密码");
+    expect(markup).toContain("你的 Seedance API Key");
+    expect(markup).toContain("API Key 仅保存在当前设备浏览器中");
     expect(markup).toContain('type="password"');
-    expect(markup).not.toContain("请输入你想生成的视频内容");
+    expect(markup).toContain("保存 Key");
+    expect(markup).toContain("请输入你想生成的视频内容");
   });
 
-  it("生产环境认证未配置时显示明确的服务器配置错误", () => {
+  it("API Key 设置提供保存、修改和清除入口", () => {
     const markup = renderToStaticMarkup(
       <I18nProvider>
-        <VideoGenerator initialAuthState="unconfigured" />
+        <ApiKeySettings
+          value="ark-secret"
+          visible={false}
+          hasSavedKey
+          onChange={() => undefined}
+          onToggleVisibility={() => undefined}
+          onSubmit={(event) => event.preventDefault()}
+          onClear={() => undefined}
+        />
       </I18nProvider>,
     );
 
-    expect(markup).toContain("访问保护尚未配置");
-    expect(markup).not.toContain('type="password"');
+    expect(markup).toContain("更新 Key");
+    expect(markup).toContain("清除");
+    expect(markup).toContain('type="password"');
   });
 
   it("移动提交栏根据结果状态提供查看结果或重新生成", () => {
@@ -182,11 +194,11 @@ describe("VideoGenerator", () => {
   it("轮询遇到上游鉴权错误时把错误显示给用户而不是伪装成本地会话过期", () => {
     const markup = renderToStaticMarkup(
       <I18nProvider>
-        <GeneratingStateDescription error="视频服务鉴权失败，请检查服务端 API Key 配置。" />
+        <GeneratingStateDescription error="视频服务认证失败，请检查你的 API Key 后重试。" />
       </I18nProvider>,
     );
 
-    expect(markup).toContain("视频服务鉴权失败，请检查服务端 API Key 配置。");
+    expect(markup).toContain("视频服务认证失败，请检查你的 API Key 后重试。");
     expect(markup).not.toContain("页面会自动更新任务状态");
   });
 });

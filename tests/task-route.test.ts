@@ -2,16 +2,19 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { GET } from "@/app/api/task/[id]/route";
 
+const createResponse = (body: unknown) => new Response(JSON.stringify(body), {
+  status: 200,
+  headers: { "content-type": "application/json" },
+});
+
 describe("GET /api/task/[id]", () => {
   const fetchMock = vi.fn();
 
   beforeEach(() => {
-    process.env.SEEDANCE_API_KEY = "test-server-only-key";
     vi.stubGlobal("fetch", fetchMock);
   });
 
   afterEach(() => {
-    delete process.env.SEEDANCE_API_KEY;
     fetchMock.mockReset();
     vi.unstubAllGlobals();
   });
@@ -28,7 +31,9 @@ describe("GET /api/task/[id]", () => {
       ),
     );
 
-    const response = await GET(new Request("http://localhost/api/task/cgt-complete"), {
+    const response = await GET(new Request("http://localhost/api/task/cgt-complete", {
+      headers: { "x-seedance-api-key": "test-request-key" },
+    }), {
       params: Promise.resolve({ id: "cgt-complete" }),
     });
 
@@ -38,5 +43,23 @@ describe("GET /api/task/[id]", () => {
       status: "succeeded",
       videoUrl: "https://example.com/video.mp4",
     });
+  });
+
+  it("限制公开任务轮询请求", async () => {
+    fetchMock.mockImplementation(() => Promise.resolve(createResponse({ id: "cgt-queued", status: "queued" })));
+    const request = () => GET(new Request("http://localhost/api/task/cgt-queued", {
+      headers: {
+        "x-seedance-api-key": "test-request-key",
+        "x-forwarded-for": "198.51.100.250",
+      },
+    }), { params: Promise.resolve({ id: "cgt-queued" }) });
+
+    for (let attempt = 0; attempt < 60; attempt += 1) {
+      await expect(request()).resolves.toMatchObject({ status: 200 });
+    }
+
+    const blocked = await request();
+    expect(blocked.status).toBe(429);
+    await expect(blocked.json()).resolves.toEqual({ code: "api.rateLimited" });
   });
 });

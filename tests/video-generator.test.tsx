@@ -23,7 +23,8 @@ describe("VideoGenerator", () => {
 
     expect(markup).toContain("请输入你想生成的视频内容");
     expect(markup).toContain('maxLength="4000"');
-    expect(markup).toContain("已配置模型");
+    expect(markup).toContain("生成模型");
+    expect(markup).not.toContain("已配置模型");
     expect(markup).toContain("按请求使用用户 Key");
     expect(markup).not.toContain("选择模型");
     expect(markup).toContain("分辨率");

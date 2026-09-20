@@ -77,12 +77,6 @@ const generationLimiter = new InMemoryRateLimiter({
   maxKeys: 5_000,
 });
 
-const loginLimiter = new InMemoryRateLimiter({
-  minuteLimit: 5,
-  hourLimit: 30,
-  maxKeys: 5_000,
-});
-
 const taskLimiter = new InMemoryRateLimiter({
   minuteLimit: 60,
   hourLimit: 600,
@@ -109,10 +103,6 @@ export function getClientIp(request: Request): string {
 
 export function enforceGenerationRateLimit(request: Request): Response | null {
   return enforceRateLimit(generationLimiter, request);
-}
-
-export function enforceLoginRateLimit(request: Request): Response | null {
-  return enforceRateLimit(loginLimiter, request);
 }
 
 export function enforceTaskRateLimit(request: Request): Response | null {

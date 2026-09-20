@@ -31,7 +31,7 @@ const en: Dict = {
   "prompt.placeholder": "Describe the video you want to generate",
   "prompt.hint": "The more specific the action and camera description, the more stable the result.",
   // Model row
-  "model.configured": "Configured model",
+  "model.configured": "Generation model",
   "model.name": "Seedance video generation",
   "model.chip": "User key sent per request",
   // Output section
@@ -205,7 +205,7 @@ const zh: Dict = {
   "prompt.label": "提示词",
   "prompt.placeholder": "请输入你想生成的视频内容",
   "prompt.hint": "越具体的动作和镜头描述，越容易得到稳定结果。",
-  "model.configured": "已配置模型",
+  "model.configured": "生成模型",
   "model.name": "Seedance 视频生成",
   "model.chip": "按请求使用用户 Key",
   "output.index": "02 / OUTPUT",

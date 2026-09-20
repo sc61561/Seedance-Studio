@@ -55,11 +55,10 @@ describe("PWA install prompt", () => {
     })).toBe(false);
   });
 
-  it("renders localized, dismissible iOS instructions only when explicitly expanded", () => {
+  it("keeps the install action visible and renders the right explicit instructions", () => {
     const closed = renderToStaticMarkup(
       <I18nProvider>
         <InstallPromptView
-          canPrompt={false}
           isIosSafari
           guideOpen={false}
           onInstall={() => undefined}
@@ -70,7 +69,6 @@ describe("PWA install prompt", () => {
     const open = renderToStaticMarkup(
       <I18nProvider>
         <InstallPromptView
-          canPrompt={false}
           isIosSafari
           guideOpen
           onInstall={() => undefined}
@@ -78,12 +76,21 @@ describe("PWA install prompt", () => {
         />
       </I18nProvider>,
     );
-    const unsupported = renderToStaticMarkup(
+    const fallbackClosed = renderToStaticMarkup(
       <I18nProvider>
         <InstallPromptView
-          canPrompt={false}
           isIosSafari={false}
           guideOpen={false}
+          onInstall={() => undefined}
+          onDismissGuide={() => undefined}
+        />
+      </I18nProvider>,
+    );
+    const fallbackOpen = renderToStaticMarkup(
+      <I18nProvider>
+        <InstallPromptView
+          isIosSafari={false}
+          guideOpen
           onInstall={() => undefined}
           onDismissGuide={() => undefined}
         />
@@ -92,21 +99,23 @@ describe("PWA install prompt", () => {
 
     expect(closed).toContain("安装应用");
     expect(closed).toContain('aria-expanded="false"');
-    expect(closed).toContain('aria-controls="ios-install-guide"');
+    expect(closed).toContain('aria-controls="install-guide"');
     expect(closed).not.toContain("添加到主屏幕");
     expect(open).toContain('role="status"');
     expect(open).toContain('aria-expanded="true"');
-    expect(open).toContain('id="ios-install-guide"');
+    expect(open).toContain('id="install-guide"');
     expect(open).toContain("点击 Safari 的分享按钮，然后选择“添加到主屏幕”");
     expect(open).toContain('aria-label="关闭安装说明"');
-    expect(unsupported).toBe("");
+    expect(fallbackClosed).toContain("安装应用");
+    expect(fallbackClosed).toContain('aria-expanded="false"');
+    expect(fallbackOpen).toContain("使用浏览器菜单中的“安装应用”或“添加到主屏幕”");
+    expect(fallbackOpen).toContain('id="install-guide"');
   });
 
   it("announces a dismissed install request as visible non-blocking status", () => {
     const markup = renderToStaticMarkup(
       <I18nProvider>
         <InstallPromptView
-          canPrompt={false}
           isIosSafari={false}
           guideOpen={false}
           status="dismissed"

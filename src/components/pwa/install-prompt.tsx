@@ -68,8 +68,15 @@ function getIosSafariInstallSnapshot(): boolean {
   });
 }
 
+function getStandaloneInstallSnapshot(): boolean {
+  if (typeof window === "undefined" || typeof navigator === "undefined") return false;
+
+  const navigatorWithStandalone = navigator as Navigator & { standalone?: boolean };
+  return navigatorWithStandalone.standalone === true
+    || window.matchMedia?.("(display-mode: standalone)").matches === true;
+}
+
 type InstallPromptViewProps = {
-  canPrompt: boolean;
   isIosSafari: boolean;
   guideOpen: boolean;
   status?: InstallOutcome | "installed";
@@ -78,7 +85,6 @@ type InstallPromptViewProps = {
 };
 
 export function InstallPromptView({
-  canPrompt,
   isIosSafari,
   guideOpen,
   status,
@@ -86,28 +92,25 @@ export function InstallPromptView({
   onDismissGuide,
 }: InstallPromptViewProps) {
   const { t } = useI18n();
-  if (!canPrompt && !isIosSafari && !status) return null;
 
   return (
     <div className="studio-install-wrap">
-      {(canPrompt || isIosSafari) && (
-        <button
-          className="studio-install-button"
-          type="button"
-          onClick={onInstall}
-          aria-label={t("install.action")}
-          aria-expanded={isIosSafari ? guideOpen : undefined}
-          aria-controls={isIosSafari ? "ios-install-guide" : undefined}
-          title={t("install.action")}
-        >
-          <Download className="size-3.5" aria-hidden="true" />
-          <span className="hidden sm:inline">{t("install.action")}</span>
-        </button>
-      )}
+      <button
+        className="studio-install-button"
+        type="button"
+        onClick={onInstall}
+        aria-label={t("install.action")}
+        aria-expanded={guideOpen}
+        aria-controls="install-guide"
+        title={t("install.action")}
+      >
+        <Download className="size-3.5" aria-hidden="true" />
+        <span className="hidden sm:inline">{t("install.action")}</span>
+      </button>
 
-      {guideOpen && isIosSafari && (
-        <div className="studio-install-guide" id="ios-install-guide" role="status">
-          <span>{t("install.iosGuide")}</span>
+      {guideOpen && (
+        <div className="studio-install-guide" id="install-guide" role="status">
+          <span>{t(isIosSafari ? "install.iosGuide" : "install.browserGuide")}</span>
           <button
             className="studio-install-guide-close"
             type="button"
@@ -132,11 +135,15 @@ export function InstallPromptView({
 export function InstallPrompt() {
   const [deferredPrompt, setDeferredPrompt] = useState<BeforeInstallPromptEventLike>();
   const [guideOpen, setGuideOpen] = useState(false);
-  const [iosGuideDismissed, setIosGuideDismissed] = useState(false);
   const [status, setStatus] = useState<InstallOutcome | "installed">();
   const isIosSafari = useSyncExternalStore(
     subscribeToInstallContext,
     getIosSafariInstallSnapshot,
+    () => false,
+  );
+  const isStandalone = useSyncExternalStore(
+    subscribeToInstallContext,
+    getStandaloneInstallSnapshot,
     () => false,
   );
 
@@ -168,19 +175,19 @@ export function InstallPrompt() {
       return;
     }
 
-    if (isIosSafari) setGuideOpen(true);
+    setGuideOpen(true);
   }
+
+  if (isStandalone) return null;
 
   return (
     <InstallPromptView
-      canPrompt={Boolean(deferredPrompt)}
-      isIosSafari={isIosSafari && !iosGuideDismissed}
+      isIosSafari={isIosSafari}
       guideOpen={guideOpen}
       status={status}
       onInstall={() => void handleInstall()}
       onDismissGuide={() => {
         setGuideOpen(false);
-        setIosGuideDismissed(true);
       }}
     />
   );

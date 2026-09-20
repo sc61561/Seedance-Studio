@@ -111,6 +111,7 @@ const en: Dict = {
   // PWA install
   "install.action": "Install app",
   "install.iosGuide": "Tap Safari’s Share button, then choose “Add to Home Screen.”",
+  "install.browserGuide": "Use the browser menu’s “Install app” or “Add to Home Screen.” If neither appears on iPhone or iPad, open this page in Safari.",
   "install.dismissGuide": "Close install instructions",
   "install.accepted": "Installation started.",
   "install.dismissed": "Installation was dismissed.",
@@ -275,6 +276,7 @@ const zh: Dict = {
   "result.videoUnsupported": "当前浏览器不支持视频播放。",
   "install.action": "安装应用",
   "install.iosGuide": "点击 Safari 的分享按钮，然后选择“添加到主屏幕”。",
+  "install.browserGuide": "使用浏览器菜单中的“安装应用”或“添加到主屏幕”；如果 iPhone 或 iPad 没有这些选项，请用 Safari 打开本页面。",
   "install.dismissGuide": "关闭安装说明",
   "install.accepted": "已开始安装。",
   "install.dismissed": "已取消安装。",

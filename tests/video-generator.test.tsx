@@ -34,6 +34,8 @@ describe("VideoGenerator", () => {
     expect(markup).toContain('min="2"');
     expect(markup).toContain('max="30"');
     expect(markup).toContain('step="1"');
+    expect(markup).toContain('aria-valuetext="5 秒"');
+    expect(markup).toContain('--range-progress:10.714285714285714%');
     expect(markup).toContain('multiple=""');
     expect(markup).toContain("最多 10 张");
     expect(markup).toContain("生成模式");

@@ -96,6 +96,8 @@ export function InstallPromptView({
           type="button"
           onClick={onInstall}
           aria-label={t("install.action")}
+          aria-expanded={isIosSafari ? guideOpen : undefined}
+          aria-controls={isIosSafari ? "ios-install-guide" : undefined}
           title={t("install.action")}
         >
           <Download className="size-3.5" aria-hidden="true" />
@@ -104,7 +106,7 @@ export function InstallPromptView({
       )}
 
       {guideOpen && isIosSafari && (
-        <div className="studio-install-guide" role="status">
+        <div className="studio-install-guide" id="ios-install-guide" role="status">
           <span>{t("install.iosGuide")}</span>
           <button
             className="studio-install-guide-close"

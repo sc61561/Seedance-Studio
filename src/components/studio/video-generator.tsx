@@ -1,6 +1,6 @@
 "use client";
 
-import type { DragEvent, FormEvent } from "react";
+import type { CSSProperties, DragEvent, FormEvent } from "react";
 import { useEffect, useEffectEvent, useRef, useState, useSyncExternalStore } from "react";
 import {
   ArrowLeft,
@@ -242,6 +242,7 @@ export function VideoGenerator() {
   }
 
   const isGenerating = task.status === "submitting" || task.status === "queued" || task.status === "processing";
+  const durationProgress = ((duration - minDuration) / (maxDuration - minDuration)) * 100;
   const referenceImagesReady = referenceImagesReadyForGeneration(referenceImages);
   const modeHint = generationMode === "first-last" && referenceImages.length < 2
     ? t("hint.firstLastNeedTwo")
@@ -695,9 +696,11 @@ export function VideoGenerator() {
                     max={maxDuration}
                     step={1}
                     value={duration}
-                    onChange={(event) => setDuration(Number(event.target.value))}
+                    style={{ "--range-progress": `${durationProgress}%` } as CSSProperties}
+                    onInput={(event) => setDuration(Number(event.currentTarget.value))}
                     disabled={isGenerating}
                     aria-label={t("field.duration")}
+                    aria-valuetext={t("duration.value", { n: duration })}
                   />
                   <span className="mt-2 flex justify-between text-[11px] text-[var(--text-3)]"><span>{t("duration.min", { n: minDuration })}</span><span>{t("duration.max", { n: maxDuration })}</span></span>
                 </label>

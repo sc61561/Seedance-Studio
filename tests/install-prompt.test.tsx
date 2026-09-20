@@ -91,8 +91,12 @@ describe("PWA install prompt", () => {
     );
 
     expect(closed).toContain("安装应用");
+    expect(closed).toContain('aria-expanded="false"');
+    expect(closed).toContain('aria-controls="ios-install-guide"');
     expect(closed).not.toContain("添加到主屏幕");
     expect(open).toContain('role="status"');
+    expect(open).toContain('aria-expanded="true"');
+    expect(open).toContain('id="ios-install-guide"');
     expect(open).toContain("点击 Safari 的分享按钮，然后选择“添加到主屏幕”");
     expect(open).toContain('aria-label="关闭安装说明"');
     expect(unsupported).toBe("");

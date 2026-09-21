@@ -8,11 +8,19 @@ export interface ApiErrorBody {
   params?: ApiErrorParams;
   // Optional already-formatted detail that is language-neutral (e.g. provider HTTP label).
   detail?: string;
+  // Optional sanitized upstream request identifier for support/debugging.
+  requestId?: string;
 }
 
-export function apiError(code: string, params?: ApiErrorParams, detail?: string): ApiErrorBody {
+export function apiError(
+  code: string,
+  params?: ApiErrorParams,
+  detail?: string,
+  requestId?: string,
+): ApiErrorBody {
   const body: ApiErrorBody = { code };
   if (params) body.params = params;
   if (detail) body.detail = detail;
+  if (requestId) body.requestId = requestId;
   return body;
 }

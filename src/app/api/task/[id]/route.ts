@@ -32,7 +32,7 @@ export async function GET(
   } catch (error) {
     if (error instanceof VideoProviderError) {
       return Response.json(
-        apiError(error.code, error.params, error.detail),
+        apiError(error.code, error.params, error.detail, error.requestId),
         { status: error.statusCode },
       );
     }

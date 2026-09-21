@@ -1,7 +1,7 @@
 "use client";
 
 import type { CSSProperties, DragEvent, FormEvent } from "react";
-import { useEffect, useEffectEvent, useRef, useState, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import {
   ArrowLeft,
   ArrowRight,
@@ -31,9 +31,7 @@ import {
 } from "lucide-react";
 
 import {
-  buildFinalPrompt,
   maxFinalPromptLength,
-  resolveGenerationMode,
   type CameraMode,
   type ConsistencyLevel,
   type GenerationMode,
@@ -57,40 +55,56 @@ import {
 } from "@/lib/video/reference-image-limits";
 import {
   aspectRatioOptions,
-  defaultDuration,
   defaultSeedanceModel,
-  maxDuration,
-  minDuration,
+  getSeedanceModelProfile,
+  officialSeedanceModelIds,
   resolutionOptions,
+  seedanceModelProfiles,
+  type OfficialSeedanceModelId,
 } from "@/lib/video/models";
 import {
-  clearActiveVideoTask,
-  persistActiveVideoTask,
-  type PersistedVideoTask,
-  type PersistedVideoTaskStatus,
-} from "@/lib/video/task-storage";
+  adjustGenerationControls,
+  buildActiveTaskPersistenceFields,
+  buildGenerationTargetView,
+  getGenerationModeGuidance,
+  getModelSettingsForUiSelection,
+  getUiModelSelection,
+  shouldShow4KWarning,
+  type GenerationControlState,
+  type UiModelSelection,
+  type UiModelTargetState,
+} from "@/lib/video/generation-form";
 import {
-  recoverActiveVideoTask,
-  isTransientTaskPollingResponse,
-  type RecoveredVideoTask,
-  type RecoveryApiErrorBody,
-} from "@/lib/video/task-recovery";
+  createGenerationRequestController,
+  createGenerationRequestSnapshotCache,
+  type GenerationRequestSnapshot,
+} from "@/lib/video/generation-request";
+import type { RecoveryPauseReason } from "@/lib/video/task-recovery";
+import { fingerprintSeedanceApiKey } from "@/lib/client/api-key-fingerprint";
+import { createTaskPollingSession } from "@/lib/client/task-polling-session";
 import { useI18n } from "@/lib/i18n/context";
 import {
   clearStoredSeedanceApiKey,
   getStoredSeedanceApiKeySnapshot,
+  readStoredSeedanceApiKey,
   saveStoredSeedanceApiKey,
   subscribeToStoredSeedanceApiKey,
 } from "@/lib/client/api-key-storage";
+import {
+  readStoredSeedanceModelSettings,
+  saveStoredSeedanceModelSettings,
+  subscribeToStoredSeedanceModelSettings,
+} from "@/lib/client/model-settings-storage";
 import { LanguageSwitcher } from "@/components/studio/language-switcher";
 import { InstallPrompt } from "@/components/pwa/install-prompt";
 
-type VideoTaskState = "idle" | "submitting" | "queued" | "processing" | "succeeded" | "failed";
-type VideoTask = { taskId: string; status: VideoTaskState; videoUrl?: string; error?: string };
+type VideoTaskState = "idle" | "submitting" | "queued" | "processing" | "paused" | "succeeded" | "failed";
+type VideoTask = { taskId: string; status: VideoTaskState; videoUrl?: string; error?: string; errorCode?: string; pauseReason?: RecoveryPauseReason; retrying?: boolean };
 
 type ApiErrorBody = { code?: string; params?: Record<string, string | number>; detail?: string };
 
 const desktopMediaQuery = "(min-width: 640px)";
+const defaultProfile = getSeedanceModelProfile(defaultSeedanceModel())!;
 
 function subscribeToOnlineStatus(onStoreChange: () => void): () => void {
   if (typeof window === "undefined") return () => undefined;
@@ -121,6 +135,11 @@ function getCurrentTimestamp(): number {
   return Date.now();
 }
 
+function getStoredModelSettingsStringSnapshot(): string {
+  const settings = readStoredSeedanceModelSettings();
+  return settings ? JSON.stringify(settings) : "";
+}
+
 export function VideoGenerator() {
   const { t } = useI18n();
 
@@ -133,10 +152,49 @@ export function VideoGenerator() {
   };
 
   const [prompt, setPrompt] = useState("");
-  const [resolution, setResolution] = useState<(typeof resolutionOptions)[number]>("720p");
-  const [aspectRatio, setAspectRatio] = useState<(typeof aspectRatioOptions)[number]>("16:9");
-  const [duration, setDuration] = useState(defaultDuration);
-  const [generationMode, setGenerationMode] = useState<GenerationMode>("keyframes");
+  const [resolution, setResolutionState] = useState<(typeof resolutionOptions)[number]>("720p");
+  const [aspectRatio, setAspectRatioState] = useState<(typeof aspectRatioOptions)[number]>("16:9");
+  const [duration, setDurationState] = useState(defaultProfile.defaultDuration);
+  const [generationMode, setGenerationModeState] = useState<GenerationMode>("reference");
+  const [generateAudio, setGenerateAudio] = useState(true);
+  const [controlsAdjusted, setControlsAdjusted] = useState(false);
+  const [modelTargetDraft, setModelTargetDraft] = useState<UiModelTargetState>();
+  const requestedControlsRef = useRef<GenerationControlState>({
+    duration: defaultProfile.defaultDuration,
+    resolution: "720p" as const,
+    aspectRatio: "16:9" as const,
+    generationMode: "reference" as const,
+  });
+  const modelTargetDraftRef = useRef<UiModelTargetState | undefined>(undefined);
+  const subscribeToModelTarget = useCallback((onStoreChange: () => void) => (
+    subscribeToStoredSeedanceModelSettings(() => {
+      if (!modelTargetDraftRef.current) {
+        const storedTarget = getUiModelSelection(readStoredSeedanceModelSettings());
+        const profile = storedTarget.selection === "custom-endpoint"
+          ? getSeedanceModelProfile(storedTarget.customProfile)
+          : getSeedanceModelProfile(storedTarget.selection);
+        if (profile) {
+          const adjustment = adjustGenerationControls(requestedControlsRef.current, profile);
+          requestedControlsRef.current = adjustment.controls;
+          setDurationState(adjustment.controls.duration);
+          setResolutionState(adjustment.controls.resolution);
+          setAspectRatioState(adjustment.controls.aspectRatio);
+          setControlsAdjusted(adjustment.adjusted);
+        }
+      }
+      onStoreChange();
+    })
+  ), []);
+  const storedModelSettingsSnapshot = useSyncExternalStore(
+    subscribeToModelTarget,
+    getStoredModelSettingsStringSnapshot,
+    () => "",
+  );
+  const modelTargetState = modelTargetDraft ?? getUiModelSelection(
+    storedModelSettingsSnapshot
+      ? JSON.parse(storedModelSettingsSnapshot) as { model: string; modelProfile?: OfficialSeedanceModelId }
+      : undefined,
+  );
   const [cameraMode, setCameraMode] = useState<CameraMode>("auto");
   const [motionLevel, setMotionLevel] = useState<MotionLevel>("auto");
   const [consistencyLevel, setConsistencyLevel] = useState<ConsistencyLevel>("high");
@@ -158,57 +216,149 @@ export function VideoGenerator() {
   const isOnline = useSyncExternalStore(subscribeToOnlineStatus, getOnlineSnapshot, () => true);
   const isDesktop = useSyncExternalStore(subscribeToDesktopViewport, getDesktopSnapshot, () => false);
   const advancedOpen = advancedOpenPreference ?? isDesktop;
-  const pollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const pollAbortRef = useRef<AbortController | null>(null);
   const submitAbortRef = useRef<AbortController | null>(null);
+  const keyEpochRef = useRef(0);
+  const keySnapshotRef = useRef("");
   const isMountedRef = useRef(true);
   const referenceImagesRef = useRef<ReferenceImage[]>([]);
-  const activeTaskCreatedAtRef = useRef<number | undefined>(undefined);
   const resultPanelRef = useRef<HTMLElement | null>(null);
+  const taskSession = useMemo(() => createTaskPollingSession({
+    onUpdate: (update) => {
+      if (!isMountedRef.current) return;
+      if (update.kind === "restore") {
+        setTask({ taskId: update.task.taskId, status: update.task.status });
+        setRestoredTask(true);
+      } else if (update.kind === "task") {
+        setTask({
+          taskId: update.task.taskId,
+          status: update.task.status,
+          videoUrl: update.task.videoUrl,
+          errorCode: update.task.errorCode,
+        });
+        if (update.task.status === "succeeded" || update.task.status === "failed") setRestoredTask(false);
+      } else if (update.kind === "pause") {
+        setTask({ taskId: update.taskId, status: "paused", pauseReason: update.reason });
+        setRestoredTask(true);
+      } else if (update.kind === "retry") {
+        setTask((current) => current.taskId === update.taskId
+          ? { ...current, retrying: true }
+          : current);
+      } else {
+        setTask({ taskId: update.taskId, status: "failed", errorCode: "api.queryFailed" });
+        setRestoredTask(false);
+      }
+    },
+  }), []);
+
+  const targetView = buildGenerationTargetView(modelTargetState, {
+    duration,
+    resolution,
+    aspectRatio,
+    generationMode,
+  }, referenceImages);
+  const resolvedTarget = targetView.resolvedTarget;
+  const selectedProfile = targetView.profile;
+  const effectiveDuration = targetView.controls.duration;
+  const effectiveResolution = targetView.controls.resolution;
+  const effectiveAspectRatio = targetView.controls.aspectRatio;
+  const modeCapability = selectedProfile.modeCapabilities[generationMode];
+  const modeGuidance = getGenerationModeGuidance(
+    selectedProfile,
+    generationMode,
+    targetView.referenceImages.length,
+  );
+  const referenceImagePayload = useMemo(
+    () => buildReferenceImagePayload(referenceImages),
+    [referenceImages],
+  );
+  const requestSnapshotCache = useMemo(
+    () => createGenerationRequestSnapshotCache(),
+    [],
+  );
+  const requestController = resolvedTarget
+    ? createGenerationRequestController(requestSnapshotCache, {
+      target: resolvedTarget,
+      userPrompt: prompt,
+      generationMode,
+      generateAudio,
+      cameraMode,
+      motionLevel,
+      consistencyLevel,
+      duration: effectiveDuration,
+      resolution: effectiveResolution,
+      aspectRatio: effectiveAspectRatio,
+      referenceImagePayload,
+    })
+    : undefined;
+  const requestSnapshot = requestController?.snapshot;
+  const requestValidationError = !requestSnapshot
+    ? t("err.customEndpointInvalid")
+    : requestSnapshot.finalPrompt.length > maxFinalPromptLength
+      ? t("err.promptWithControlsTooLong", { n: maxFinalPromptLength })
+      : requestSnapshot.exceedsByteLimit
+        ? t("err.requestTooLarge")
+        : undefined;
 
   useEffect(() => {
     referenceImagesRef.current = referenceImages;
   }, [referenceImages]);
 
-  const stopPolling = () => {
-    if (pollTimerRef.current) {
-      clearTimeout(pollTimerRef.current);
-      pollTimerRef.current = null;
-    }
-    pollAbortRef.current?.abort();
-    pollAbortRef.current = null;
-  };
+  function applyControlProfile(
+    profile: typeof selectedProfile,
+    nextGenerationMode: GenerationMode,
+  ) {
+    const adjustment = adjustGenerationControls({
+      ...requestedControlsRef.current,
+      generationMode: nextGenerationMode,
+    }, profile);
+    setRequestedControls(adjustment.controls);
+    setControlsAdjusted(adjustment.adjusted);
+  }
 
-  const clearTrackedActiveTask = () => {
-    clearActiveVideoTask();
-    activeTaskCreatedAtRef.current = undefined;
-    setRestoredTask(false);
-  };
+  function setRequestedControls(next: GenerationControlState) {
+    requestedControlsRef.current = next;
+    setDurationState(next.duration);
+    setResolutionState(next.resolution);
+    setAspectRatioState(next.aspectRatio);
+    setGenerationModeState(next.generationMode);
+  }
 
-  const handlePersistTrackedActiveTask = (taskId: string, status: PersistedVideoTaskStatus) => {
-    const createdAt = activeTaskCreatedAtRef.current;
-    if (createdAt === undefined) return;
-    persistActiveVideoTask({
-      taskId,
-      status,
-      createdAt,
-      model: defaultSeedanceModel(),
-      resolution,
-      aspectRatio,
-      duration,
-    });
-  };
+  function handleModelTargetChange(next: UiModelTargetState) {
+    const settings = getModelSettingsForUiSelection(next);
+    const persisted = settings ? saveStoredSeedanceModelSettings(settings) : false;
+    const nextDraft = persisted ? undefined : next;
+    modelTargetDraftRef.current = nextDraft;
+    setModelTargetDraft(nextDraft);
+    const profile = next.selection === "custom-endpoint"
+      ? getSeedanceModelProfile(next.customProfile)
+      : getSeedanceModelProfile(next.selection);
+    if (profile) applyControlProfile(profile, generationMode);
+  }
 
   useEffect(() => {
     isMountedRef.current = true;
     return () => {
       isMountedRef.current = false;
-      stopPolling();
+      taskSession.invalidate();
       submitAbortRef.current?.abort();
       submitAbortRef.current = null;
       referenceImagesRef.current.forEach((image) => URL.revokeObjectURL(image.previewUrl));
     };
-  }, []);
+  }, [taskSession]);
+
+  useEffect(() => {
+    const onKeyChange = () => {
+      const next = readStoredSeedanceApiKey();
+      if (next === keySnapshotRef.current) return;
+      keyEpochRef.current += 1;
+      keySnapshotRef.current = next;
+      submitAbortRef.current?.abort();
+      void taskSession.changeKey(next);
+    };
+    const unsubscribe = subscribeToStoredSeedanceApiKey(onKeyChange);
+    onKeyChange();
+    return unsubscribe;
+  }, [taskSession]);
 
   function handleApiKeySave(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -219,11 +369,19 @@ export function VideoGenerator() {
       return;
     }
 
+    if (normalizedKey !== apiKey) {
+      keyEpochRef.current += 1;
+      taskSession.invalidate();
+      submitAbortRef.current?.abort();
+    }
     if (!saveStoredSeedanceApiKey(normalizedKey)) {
+      void taskSession.changeKey(apiKey);
       setApiKeyError(t("api.apiKeyStorageFailed"));
       setApiKeyNotice(undefined);
       return;
     }
+
+    if (normalizedKey === apiKey) void taskSession.changeKey(normalizedKey);
 
     setApiKeyDraft(undefined);
     setApiKeyError(undefined);
@@ -231,26 +389,36 @@ export function VideoGenerator() {
   }
 
   function handleApiKeyClear() {
-    stopPolling();
+    keyEpochRef.current += 1;
+    keySnapshotRef.current = "";
+    taskSession.clear();
     submitAbortRef.current?.abort();
-    clearTrackedActiveTask();
-    clearStoredSeedanceApiKey();
+    const cleared = clearStoredSeedanceApiKey();
     setApiKeyDraft(undefined);
     setTask({ taskId: "", status: "idle" });
-    setApiKeyError(undefined);
-    setApiKeyNotice(t("apiKey.cleared"));
+    setRestoredTask(false);
+    setApiKeyError(cleared ? undefined : t("api.apiKeyStorageFailed"));
+    setApiKeyNotice(cleared ? t("apiKey.cleared") : undefined);
   }
 
   const isGenerating = task.status === "submitting" || task.status === "queued" || task.status === "processing";
-  const durationProgress = ((duration - minDuration) / (maxDuration - minDuration)) * 100;
+  const durationProgress = (
+    (effectiveDuration - selectedProfile.minDuration)
+    / (selectedProfile.maxDuration - selectedProfile.minDuration)
+  ) * 100;
   const referenceImagesReady = referenceImagesReadyForGeneration(referenceImages);
-  const modeHint = generationMode === "first-last" && referenceImages.length < 2
-    ? t("hint.firstLastNeedTwo")
-    : generationMode === "keyframes" && referenceImages.length < 2
-      ? t("hint.keyframesNeedTwo")
-      : generationMode === "keyframes"
-        ? t("hint.keyframesOrder")
-        : t("hint.referenceOrder");
+  const modeHint = t(modeGuidance.key, modeGuidance.params);
+  const canSubmit = Boolean(
+    prompt.trim()
+    && !isGenerating
+    && task.status !== "paused"
+    && isOnline
+    && referenceImagesReady
+    && apiKey
+    && !modeGuidance.isError
+    && !requestValidationError
+    && requestSnapshot,
+  );
 
   async function handleReferenceImageChange(files: FileList | null) {
     const selectedFiles = Array.from(files ?? []);
@@ -333,67 +501,64 @@ export function VideoGenerator() {
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (isGenerating || !isOnline || !prompt.trim() || !referenceImagesReady || !apiKey) {
+    if (!canSubmit || !requestController || !resolvedTarget) {
       if (!apiKey) {
         setApiKeyError(t("api.apiKeyRequired"));
       }
+      if (modeGuidance.isError) {
+        setReferenceError(modeHint);
+      }
+      if (requestValidationError) {
+        setTask({ taskId: "", status: "failed", error: requestValidationError });
+      }
       return;
     }
-    stopPolling();
-    clearTrackedActiveTask();
+    const normalizedKey = apiKey.trim();
+    const keyEpoch = keyEpochRef.current;
+    taskSession.clear();
+    setRestoredTask(false);
     setTask({ taskId: "", status: "submitting" });
     const controller = new AbortController();
     submitAbortRef.current = controller;
-    const effectiveGenerationMode = resolveGenerationMode(generationMode, referenceImages.length);
-    const finalPrompt = buildFinalPrompt({
-      userPrompt: prompt,
-      referenceImageCount: referenceImages.length,
-      generationMode: effectiveGenerationMode,
-      cameraMode,
-      motionLevel,
-      consistencyLevel,
-    });
-    if (finalPrompt.length > maxFinalPromptLength) {
-      if (submitAbortRef.current === controller) submitAbortRef.current = null;
-      setTask({
-        taskId: "",
-        status: "failed",
-        error: t("err.promptWithControlsTooLong", { n: maxFinalPromptLength }),
-      });
-      return;
-    }
-    const imagesForGeneration = effectiveGenerationMode === "first-last" && referenceImages.length > 2
-      ? [referenceImages[0], referenceImages[referenceImages.length - 1]]
-      : referenceImages;
+    const isCurrentSubmission = () => (
+      isMountedRef.current
+      && !controller.signal.aborted
+      && keyEpochRef.current === keyEpoch
+      && readStoredSeedanceApiKey() === normalizedKey
+    );
     try {
-      const response = await fetch("/api/generate", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "x-seedance-api-key": apiKey,
-        },
-        signal: controller.signal,
-        body: JSON.stringify({
-          prompt: finalPrompt,
-          model: defaultSeedanceModel(),
-          resolution,
-          aspectRatio,
-          duration,
-          ...buildReferenceImagePayload(imagesForGeneration),
-        }),
-      });
+      let apiKeyFingerprint: string;
+      try {
+        apiKeyFingerprint = await fingerprintSeedanceApiKey(normalizedKey);
+      } catch {
+        throw new Error(t("api.apiKeyFingerprintUnavailable"));
+      }
+      if (!isCurrentSubmission()) return;
+      const response = await fetch(
+        "/api/generate",
+        requestController.buildRequestInit(normalizedKey, controller.signal),
+      );
       const payload = (await response.json()) as { taskId?: string } & ApiErrorBody;
-      if (!isMountedRef.current || controller.signal.aborted) return;
+      if (!isCurrentSubmission()) return;
       if (!response.ok || !payload.taskId) {
         throw new Error(localizeApiError(payload, "api.createFailed"));
       }
-      const nextTask = { taskId: payload.taskId, status: "queued" as const };
-      activeTaskCreatedAtRef.current = getCurrentTimestamp();
-      handlePersistTrackedActiveTask(nextTask.taskId, nextTask.status);
-      setTask(nextTask);
-      await pollTask(nextTask.taskId);
+      const persisted = await taskSession.startCreated({
+        taskId: payload.taskId,
+        status: "queued",
+        createdAt: getCurrentTimestamp(),
+        apiKeyFingerprint,
+        ...buildActiveTaskPersistenceFields(resolvedTarget, {
+          duration: effectiveDuration,
+          resolution: effectiveResolution,
+          aspectRatio: effectiveAspectRatio,
+        }),
+      }, normalizedKey);
+      if (!persisted && isCurrentSubmission()) {
+        setTask({ taskId: payload.taskId, status: "failed", error: t("api.taskStorageFailed") });
+      }
     } catch (error) {
-      if (!isMountedRef.current || controller.signal.aborted) return;
+      if (!isCurrentSubmission()) return;
       setTask({
         taskId: "",
         status: "failed",
@@ -403,185 +568,6 @@ export function VideoGenerator() {
       if (submitAbortRef.current === controller) submitAbortRef.current = null;
     }
   }
-
-  async function pollTask(taskId: string) {
-    if (!isMountedRef.current) return;
-    if (!apiKey) return;
-    if (pollAbortRef.current) return;
-    if (typeof navigator !== "undefined" && !navigator.onLine) {
-      scheduleTaskPoll(taskId);
-      return;
-    }
-    const controller = new AbortController();
-    pollAbortRef.current = controller;
-    try {
-      const response = await fetch(`/api/task/${encodeURIComponent(taskId)}`, {
-        cache: "no-store",
-        headers: { "x-seedance-api-key": apiKey },
-        signal: controller.signal,
-      });
-      let payload: ({
-        taskId: string;
-        status: VideoTaskState;
-        videoUrl?: string;
-        errorCode?: string;
-      } & ApiErrorBody) | undefined;
-      try {
-        payload = await response.json() as typeof payload;
-      } catch {
-        if (isTransientTaskPollingResponse(response.status)) {
-          scheduleTaskPoll(taskId);
-          return;
-        }
-        clearTrackedActiveTask();
-        setTask({ taskId, status: "failed", error: t("api.queryFailed") });
-        stopPolling();
-        return;
-      }
-      if (!isMountedRef.current || controller.signal.aborted) return;
-      if (!response.ok) {
-        if (isTransientTaskPollingResponse(response.status, payload?.code)) {
-          setTask((currentTask) => currentTask.taskId === taskId
-            ? { ...currentTask, error: localizeApiError(payload, "api.queryFailed") }
-            : currentTask);
-          scheduleTaskPoll(taskId);
-          return;
-        }
-        clearTrackedActiveTask();
-        setTask({ taskId, status: "failed", error: localizeApiError(payload, "api.queryFailed") });
-        stopPolling();
-        return;
-      }
-      if (
-        !payload
-        || typeof payload.taskId !== "string"
-        || !["queued", "processing", "succeeded", "failed"].includes(payload.status)
-      ) {
-        scheduleTaskPoll(taskId);
-        return;
-      }
-      const nextTask = {
-        taskId: payload.taskId,
-        status: payload.status,
-        videoUrl: payload.videoUrl,
-        error: payload.errorCode ? t(payload.errorCode) : undefined,
-      };
-      setTask(nextTask);
-      if (payload.status === "succeeded" || payload.status === "failed") {
-        clearTrackedActiveTask();
-        stopPolling();
-        return;
-      }
-      if (payload.status !== "queued" && payload.status !== "processing") {
-        clearTrackedActiveTask();
-        setTask({ taskId, status: "failed", error: t("api.queryFailed") });
-        stopPolling();
-        return;
-      }
-      handlePersistTrackedActiveTask(payload.taskId, payload.status);
-      scheduleTaskPoll(taskId);
-    } catch {
-      if (!isMountedRef.current || controller.signal.aborted) return;
-      if (typeof navigator !== "undefined" && !navigator.onLine) {
-        scheduleTaskPoll(taskId);
-        return;
-      }
-      scheduleTaskPoll(taskId);
-    } finally {
-      if (pollAbortRef.current === controller) pollAbortRef.current = null;
-    }
-  }
-
-  function scheduleTaskPoll(taskId: string) {
-    if (pollTimerRef.current) clearTimeout(pollTimerRef.current);
-    pollTimerRef.current = setTimeout(() => {
-      pollTimerRef.current = null;
-      if (isMountedRef.current) void pollTask(taskId);
-    }, 5_000);
-  }
-
-  const recoverStoredTask = useEffectEvent(async () => {
-    if (!apiKey) return;
-    const controller = new AbortController();
-    pollAbortRef.current = controller;
-
-    try {
-      await recoverActiveVideoTask({
-        signal: controller.signal,
-        online: typeof navigator === "undefined" || navigator.onLine,
-        fetchTask: (input, init) => {
-          const headers = new Headers(init.headers);
-          headers.set("x-seedance-api-key", apiKey);
-          return fetch(input, { ...init, headers });
-        },
-        onRestore: (storedTask: PersistedVideoTask) => {
-          if (!isMountedRef.current || controller.signal.aborted) return;
-          activeTaskCreatedAtRef.current = storedTask.createdAt;
-          if (storedTask.resolution && (resolutionOptions as readonly string[]).includes(storedTask.resolution)) {
-            setResolution(storedTask.resolution as (typeof resolutionOptions)[number]);
-          }
-          if (storedTask.aspectRatio && (aspectRatioOptions as readonly string[]).includes(storedTask.aspectRatio)) {
-            setAspectRatio(storedTask.aspectRatio as (typeof aspectRatioOptions)[number]);
-          }
-          if (
-            storedTask.duration !== undefined
-            && storedTask.duration >= minDuration
-            && storedTask.duration <= maxDuration
-          ) {
-            setDuration(storedTask.duration);
-          }
-          setTask({ taskId: storedTask.taskId, status: storedTask.status });
-          setRestoredTask(true);
-        },
-        onTask: (recoveredTask: RecoveredVideoTask) => {
-          if (!isMountedRef.current || controller.signal.aborted) return;
-          setTask({
-            taskId: recoveredTask.taskId,
-            status: recoveredTask.status,
-            videoUrl: recoveredTask.videoUrl,
-            error: recoveredTask.errorCode ? t(recoveredTask.errorCode) : undefined,
-          });
-          if (recoveredTask.status === "succeeded" || recoveredTask.status === "failed") {
-            activeTaskCreatedAtRef.current = undefined;
-            setRestoredTask(false);
-          }
-        },
-        onSchedule: (taskId) => {
-          if (isMountedRef.current && !controller.signal.aborted) scheduleTaskPoll(taskId);
-        },
-        onUnauthorized: () => {
-          if (isMountedRef.current && !controller.signal.aborted) {
-            setApiKeyError(t("api.apiKeyRequired"));
-          }
-        },
-        onTransientError: (body, error) => {
-          if (!isMountedRef.current || controller.signal.aborted) return;
-          setRestoredTask(true);
-          setTask((currentTask) => ({
-            ...currentTask,
-            error: error instanceof Error ? t("api.queryFailed") : localizeApiError(body, "api.queryFailed"),
-          }));
-        },
-        onError: (body?: RecoveryApiErrorBody, error?: unknown) => {
-          if (!isMountedRef.current || controller.signal.aborted) return;
-          activeTaskCreatedAtRef.current = undefined;
-          setRestoredTask(false);
-          setTask({
-            taskId: "",
-            status: "failed",
-            error: error instanceof Error ? error.message : localizeApiError(body, "api.queryFailed"),
-          });
-        },
-      });
-    } finally {
-      if (pollAbortRef.current === controller) pollAbortRef.current = null;
-    }
-  });
-
-  useEffect(() => {
-    stopPolling();
-    if (apiKey) void recoverStoredTask();
-  }, [apiKey]);
 
   return (
     <main className="studio-shell app-shell has-mobile-action text-[var(--text)]">
@@ -607,7 +593,12 @@ export function VideoGenerator() {
         </header>
 
         <NetworkStatusBanner isOnline={isOnline} />
-        <TaskRecoveryNotice restored={restoredTask} />
+        <TaskRecoveryNotice
+          restored={restoredTask}
+          pauseReason={task.pauseReason}
+          taskId={task.taskId}
+          retrying={task.retrying}
+        />
 
         <ApiKeySettings
           value={apiKeyDraft ?? apiKey}
@@ -659,17 +650,29 @@ export function VideoGenerator() {
                 <p className="mt-2 text-xs text-[var(--text-3)]">{t("prompt.hint")}</p>
               </div>
 
-              <div className="studio-model-row flex items-center justify-between gap-4 px-5 py-4 sm:px-7">
-                <div className="flex min-w-0 items-center gap-3">
-                  <div className="studio-model-icon flex size-9 shrink-0 items-center justify-center rounded-lg" aria-hidden="true">
-                    <Film className="size-4" strokeWidth={1.6} />
-                  </div>
-                  <div className="min-w-0">
-                    <p className="studio-label">{t("model.configured")}</p>
-                    <p className="mt-1 truncate text-sm text-[var(--text)]">{t("model.name")}</p>
-                  </div>
-                </div>
-                <span className="studio-chip shrink-0"><Check className="size-3" /> {t("model.chip")}</span>
+              <div className="studio-model-row px-5 py-4 sm:px-7">
+                <ModelTargetControls
+                  selection={modelTargetState.selection}
+                  customEndpoint={modelTargetState.customEndpoint}
+                  customProfile={modelTargetState.customProfile}
+                  disabled={isGenerating}
+                  error={modelTargetState.selection === "custom-endpoint" && !resolvedTarget
+                    ? t("err.customEndpointInvalid")
+                    : undefined}
+                  onSelectionChange={(selection) => handleModelTargetChange({
+                    ...modelTargetState,
+                    selection,
+                  })}
+                  onEndpointChange={(customEndpoint) => handleModelTargetChange({
+                    ...modelTargetState,
+                    customEndpoint,
+                  })}
+                  onProfileChange={(customProfile) => handleModelTargetChange({
+                    ...modelTargetState,
+                    customProfile,
+                  })}
+                />
+                <ControlAdjustmentNotice visible={controlsAdjusted || targetView.adjusted} />
               </div>
 
               <div className="studio-form-section border-t border-[var(--line)]">
@@ -679,35 +682,75 @@ export function VideoGenerator() {
                 </div>
 
                 <div className="grid gap-4 sm:grid-cols-2">
-                  <SelectField label={t("field.resolution")} value={resolution} onChange={(value) => setResolution(value as typeof resolution)} disabled={isGenerating} options={resolutionOptions} />
-                  <SelectField label={t("field.aspectRatio")} value={aspectRatio} onChange={(value) => setAspectRatio(value as typeof aspectRatio)} disabled={isGenerating} options={aspectRatioOptions} />
+                  <SelectField label={t("field.resolution")} value={effectiveResolution} onChange={(value) => {
+                    setRequestedControls({
+                      ...requestedControlsRef.current,
+                      resolution: value as typeof resolution,
+                    });
+                    setControlsAdjusted(false);
+                  }} disabled={isGenerating} options={selectedProfile.resolutions} />
+                  <SelectField label={t("field.aspectRatio")} value={effectiveAspectRatio} onChange={(value) => {
+                    setRequestedControls({
+                      ...requestedControlsRef.current,
+                      aspectRatio: value as typeof aspectRatio,
+                    });
+                    setControlsAdjusted(false);
+                  }} disabled={isGenerating} options={modeCapability.aspectRatios} />
                 </div>
+
+                {shouldShow4KWarning(selectedProfile.id, effectiveResolution) && (
+                  <p className="mt-3 text-xs leading-5 text-amber-700" role="status">
+                    {t("warning.4kPreview")}
+                  </p>
+                )}
 
                 <label className="mt-5 block" htmlFor="video-duration">
                   <span className="mb-3 flex items-center justify-between gap-4">
                     <span className="studio-label">{t("field.duration")}</span>
-                    <span className="studio-value">{t("duration.value", { n: duration })}</span>
+                    <span className="studio-value">{t("duration.value", { n: effectiveDuration })}</span>
                   </span>
                   <input
                     id="video-duration"
                     className="studio-range"
                     type="range"
-                    min={minDuration}
-                    max={maxDuration}
+                    min={selectedProfile.minDuration}
+                    max={selectedProfile.maxDuration}
                     step={1}
-                    value={duration}
+                    value={effectiveDuration}
                     style={{ "--range-progress": `${durationProgress}%` } as CSSProperties}
-                    onInput={(event) => setDuration(Number(event.currentTarget.value))}
+                    onInput={(event) => {
+                      setRequestedControls({
+                        ...requestedControlsRef.current,
+                        duration: Number(event.currentTarget.value),
+                      });
+                      setControlsAdjusted(false);
+                    }}
                     disabled={isGenerating}
                     aria-label={t("field.duration")}
-                    aria-valuetext={t("duration.value", { n: duration })}
+                    aria-valuetext={t("duration.value", { n: effectiveDuration })}
                   />
-                  <span className="mt-2 flex justify-between text-[11px] text-[var(--text-3)]"><span>{t("duration.min", { n: minDuration })}</span><span>{t("duration.max", { n: maxDuration })}</span></span>
+                  <span className="mt-2 flex justify-between text-[11px] text-[var(--text-3)]"><span>{t("duration.min", { n: selectedProfile.minDuration })}</span><span>{t("duration.max", { n: selectedProfile.maxDuration })}</span></span>
                 </label>
 
                 <div className="mt-5">
-                  <SelectField label={t("field.generationMode")} value={generationMode} onChange={(value) => setGenerationMode(value as GenerationMode)} disabled={isGenerating} options={[["reference", t("mode.reference")], ["keyframes", t("mode.keyframes")], ["first-last", t("mode.first-last")]]} />
+                  <SelectField label={t("field.generationMode")} value={generationMode} onChange={(value) => {
+                    applyControlProfile(selectedProfile, value as GenerationMode);
+                  }} disabled={isGenerating} options={[["reference", t("mode.reference")], ["ordered-reference", t("mode.orderedReference")], ["first-frame", t("mode.firstFrame")], ["first-last", t("mode.firstLast")]]} />
                 </div>
+
+                <label className="mt-5 flex items-start gap-3 rounded-lg border border-[var(--line)] px-3.5 py-3">
+                  <input
+                    className="mt-0.5 size-4 accent-[var(--text)]"
+                    type="checkbox"
+                    checked={generateAudio}
+                    onChange={(event) => setGenerateAudio(event.target.checked)}
+                    disabled={isGenerating}
+                  />
+                  <span>
+                    <span className="studio-label block">{t("field.generateAudio")}</span>
+                    <span className="mt-1 block text-xs leading-5 text-[var(--text-3)]">{t("audio.hint")}</span>
+                  </span>
+                </label>
 
                 <div className="studio-details mt-5">
                   <button
@@ -721,11 +764,16 @@ export function VideoGenerator() {
                     <ChevronDown className={`size-4 text-[var(--text-3)] transition-transform ${advancedOpen ? "rotate-180" : ""}`} />
                   </button>
                   <div className="studio-advanced-content mt-4 grid gap-4 sm:grid-cols-3" hidden={!advancedOpen} id="advanced-settings">
-                    <SelectField label={t("field.camera")} value={cameraMode} onChange={(value) => setCameraMode(value as CameraMode)} disabled={isGenerating} options={[["auto", t("camera.auto")], ["locked", t("camera.locked")], ["push-in", t("camera.push-in")], ["pull-back", t("camera.pull-back")]]} />
-                    <SelectField label={t("field.motion")} value={motionLevel} onChange={(value) => setMotionLevel(value as MotionLevel)} disabled={isGenerating} options={[["auto", t("motion.auto")], ["low", t("motion.low")], ["medium", t("motion.medium")], ["high", t("motion.high")]]} />
-                    <SelectField label={t("field.consistency")} value={consistencyLevel} onChange={(value) => setConsistencyLevel(value as ConsistencyLevel)} disabled={isGenerating} options={[["normal", t("consistency.normal")], ["high", t("consistency.high")], ["very-high", t("consistency.very-high")]]} />
+                    <SelectField label={`${t("field.camera")} · ${t("control.promptAssisted")}`} value={cameraMode} onChange={(value) => setCameraMode(value as CameraMode)} disabled={isGenerating} options={[["auto", t("camera.auto")], ["locked", t("camera.locked")], ["push-in", t("camera.push-in")], ["pull-back", t("camera.pull-back")]]} />
+                    <SelectField label={`${t("field.motion")} · ${t("control.promptAssisted")}`} value={motionLevel} onChange={(value) => setMotionLevel(value as MotionLevel)} disabled={isGenerating} options={[["auto", t("motion.auto")], ["low", t("motion.low")], ["medium", t("motion.medium")], ["high", t("motion.high")]]} />
+                    <SelectField label={`${t("field.consistency")} · ${t("control.promptAssisted")}`} value={consistencyLevel} onChange={(value) => setConsistencyLevel(value as ConsistencyLevel)} disabled={isGenerating} options={[["normal", t("consistency.normal")], ["high", t("consistency.high")], ["very-high", t("consistency.very-high")]]} />
                   </div>
                 </div>
+
+                {requestSnapshot && <FinalPromptPreview snapshot={requestSnapshot} />}
+                {requestValidationError && (
+                  <p className="mt-3 text-xs text-red-600" role="alert">{requestValidationError}</p>
+                )}
               </div>
 
               <div className="studio-form-section border-t border-[var(--line)]">
@@ -750,7 +798,12 @@ export function VideoGenerator() {
                   <span className="mt-4 inline-flex items-center gap-1.5 text-xs font-medium text-[var(--text-2)] transition-colors group-hover:text-[var(--text)]"><Upload className="size-3.5" /> {t("ref.choose")}</span>
                 </label>
 
-                <p className="mt-3 text-xs leading-5 text-[var(--text-3)]">{modeHint}</p>
+                <p
+                  className={`mt-3 text-xs leading-5 ${modeGuidance.isError ? "text-red-600" : "text-[var(--text-3)]"}`}
+                  role={modeGuidance.isError ? "alert" : undefined}
+                >
+                  {modeHint}
+                </p>
                 {referenceError && <p className="mt-2 text-xs text-red-600" role="alert">{referenceError}</p>}
 
                 {referenceImages.length > 0 && (
@@ -808,7 +861,7 @@ export function VideoGenerator() {
               <div className="studio-mobile-submit-bar border-t border-[var(--line)]">
                 <MobileSubmitAction
                   status={task.status}
-                  disabled={!prompt.trim() || isGenerating || !isOnline || !referenceImagesReady || !apiKey}
+                  disabled={!canSubmit}
                   onViewResult={() => resultPanelRef.current?.scrollIntoView({ behavior: "smooth", block: "start" })}
                 />
               </div>
@@ -827,19 +880,26 @@ export function VideoGenerator() {
               ) : (
                 <div className={`studio-empty-state ${isGenerating ? "is-active" : ""} ${task.status === "failed" ? "is-error" : ""}`}>
                   <div className="studio-empty-icon" aria-hidden="true">
-                    {isGenerating ? <LoaderCircle className="size-6 animate-spin" /> : task.status === "failed" ? <CircleAlert className="size-6" /> : <Play className="ml-0.5 size-6" />}
+                    {isGenerating ? <LoaderCircle className="size-6 animate-spin" /> : task.status === "failed" || task.status === "paused" ? <CircleAlert className="size-6" /> : <Play className="ml-0.5 size-6" />}
                   </div>
                   <p className="mt-5 text-sm font-medium text-[var(--text)]">
                     {task.status === "idle" && t("state.idle.title")}
                     {task.status === "submitting" && t("state.submitting.title")}
                     {task.status === "queued" && t("state.queued.title")}
                     {task.status === "processing" && t("state.processing.title")}
+                    {task.status === "paused" && t("state.paused.title")}
                     {task.status === "failed" && t("state.failed.title")}
                   </p>
                   <p className="mt-2 max-w-xs text-center text-xs leading-5 text-[var(--text-3)]">
                     {task.status === "idle" && t("state.idle.desc")}
                     {isGenerating && <GeneratingStateDescription error={task.error} />}
-                    {task.status === "failed" && task.error}
+                    {task.status === "paused" && t(`task.pause.${task.pauseReason ?? "invalid-response"}`)}
+                    {task.status === "failed" && (
+                      <>
+                        {task.error ?? (task.errorCode ? t(task.errorCode) : t("api.queryFailed"))}
+                        {task.taskId ? <span className="mt-2 block break-all">{t("task.id")}: {task.taskId}</span> : null}
+                      </>
+                    )}
                   </p>
                   {task.status === "idle" && (
                     <div className="mt-6 flex items-center gap-2 text-[11px] text-[var(--text-3)]">
@@ -858,6 +918,116 @@ export function VideoGenerator() {
         </footer>
       </div>
     </main>
+  );
+}
+
+type ModelTargetControlsProps = {
+  selection: UiModelSelection;
+  customEndpoint: string;
+  customProfile: OfficialSeedanceModelId;
+  disabled: boolean;
+  error?: string;
+  onSelectionChange: (selection: UiModelSelection) => void;
+  onEndpointChange: (endpoint: string) => void;
+  onProfileChange: (profile: OfficialSeedanceModelId) => void;
+};
+
+export function ModelTargetControls({
+  selection,
+  customEndpoint,
+  customProfile,
+  disabled,
+  error,
+  onSelectionChange,
+  onEndpointChange,
+  onProfileChange,
+}: ModelTargetControlsProps) {
+  const { t } = useI18n();
+  const modelOptions = [
+    ...officialSeedanceModelIds.map((id) => {
+      const profile = getSeedanceModelProfile(id)!;
+      return [id, `${profile.label} · ${id}`] as const;
+    }),
+    ["custom-endpoint", t("model.customEndpoint")] as const,
+  ];
+
+  return (
+    <div>
+      <div className="mb-3 flex items-center gap-3">
+        <div className="studio-model-icon flex size-9 shrink-0 items-center justify-center rounded-lg" aria-hidden="true">
+          <Film className="size-4" strokeWidth={1.6} />
+        </div>
+        <div>
+          <p className="studio-label">{t("model.configured")}</p>
+          <p className="mt-1 text-xs text-[var(--text-3)]">{t("model.chip")}</p>
+        </div>
+      </div>
+      <SelectField
+        label={t("model.select")}
+        value={selection}
+        onChange={(value) => onSelectionChange(value as UiModelSelection)}
+        disabled={disabled}
+        options={modelOptions}
+      />
+      {selection === "custom-endpoint" && (
+        <div className="mt-4 grid gap-4">
+          <label className="block">
+            <span className="studio-label mb-2 block">{t("model.endpointLabel")}</span>
+            <input
+              className="studio-textarea min-h-0 w-full py-3"
+              type="text"
+              value={customEndpoint}
+              onChange={(event) => onEndpointChange(event.target.value)}
+              placeholder={t("model.endpointPlaceholder")}
+              autoComplete="off"
+              spellCheck={false}
+              disabled={disabled}
+            />
+          </label>
+          <SelectField
+            label={t("model.profileLabel")}
+            value={customProfile}
+            onChange={(value) => onProfileChange(value as OfficialSeedanceModelId)}
+            disabled={disabled}
+            options={seedanceModelProfiles.map((profile) => [
+              profile.id,
+              `${profile.label} · ${profile.id}`,
+            ] as const)}
+          />
+          <p className="text-xs leading-5 text-[var(--text-3)]">{t("model.profileHelp")}</p>
+          {error && <p className="text-xs text-red-600" role="alert">{error}</p>}
+        </div>
+      )}
+    </div>
+  );
+}
+
+export function ControlAdjustmentNotice({ visible }: { visible: boolean }) {
+  const { t } = useI18n();
+  if (!visible) return null;
+  return (
+    <p className="mt-3 text-xs leading-5 text-amber-700" role="status">
+      {t("notice.controlsAdjusted")}
+    </p>
+  );
+}
+
+export function FinalPromptPreview({
+  snapshot,
+}: {
+  snapshot: GenerationRequestSnapshot;
+}) {
+  const { t } = useI18n();
+  return (
+    <details className="studio-details mt-5">
+      <summary className="flex cursor-pointer list-none items-center justify-between gap-4 text-left">
+        <span className="text-sm text-[var(--text)]">{t("prompt.previewTitle")}</span>
+        <span className="studio-counter">{snapshot.finalPrompt.length} / {maxFinalPromptLength}</span>
+      </summary>
+      <pre className="mt-4 whitespace-pre-wrap break-words rounded-lg border border-[var(--line)] bg-[var(--surface-2)] p-3 text-xs leading-5 text-[var(--text-2)]">
+        {snapshot.finalPrompt || t("prompt.previewEmpty")}
+      </pre>
+    </details>
   );
 }
 
@@ -974,6 +1144,8 @@ export function MobileSubmitAction({
   const isSucceeded = status === "succeeded";
   const label = isGenerating
     ? t("submit.generating")
+    : status === "paused"
+      ? t("submit.paused")
     : isSucceeded
       ? t("submit.viewResult")
       : status === "failed"
@@ -994,14 +1166,29 @@ export function MobileSubmitAction({
   );
 }
 
-export function TaskRecoveryNotice({ restored }: { restored: boolean }) {
+export function TaskRecoveryNotice({
+  restored,
+  pauseReason,
+  taskId,
+  retrying,
+}: {
+  restored: boolean;
+  pauseReason?: RecoveryPauseReason;
+  taskId?: string;
+  retrying?: boolean;
+}) {
   const { t } = useI18n();
   if (!restored) return null;
 
   return (
     <div className="studio-network-status mb-6 flex items-center gap-2" role="status">
-      <LoaderCircle className="size-4 shrink-0 animate-spin" aria-hidden="true" />
-      <span>{t("task.restored")}</span>
+      {pauseReason
+        ? <CircleAlert className="size-4 shrink-0" aria-hidden="true" />
+        : <LoaderCircle className="size-4 shrink-0 animate-spin" aria-hidden="true" />}
+      <span>
+        {pauseReason ? t(`task.pause.${pauseReason}`) : retrying ? t("task.retrying") : t("task.restored")}
+        {pauseReason && taskId ? ` · ${t("task.id")}: ${taskId}` : ""}
+      </span>
     </div>
   );
 }
@@ -1188,6 +1375,7 @@ function TaskBadge({ status }: { status: VideoTaskState }) {
   const { t } = useI18n();
   if (status === "succeeded") return <span className="studio-task-badge is-success"><Check className="size-3" /> {t("badge.success")}</span>;
   if (status === "failed") return <span className="studio-task-badge is-error"><X className="size-3" /> {t("badge.failed")}</span>;
+  if (status === "paused") return <span className="studio-task-badge is-error"><CircleAlert className="size-3" /> {t("badge.paused")}</span>;
   if (status === "submitting" || status === "queued" || status === "processing") return <span className="studio-task-badge is-active"><span className="studio-status-dot" /> {t("badge.active")}</span>;
   return <span className="studio-task-badge">{t("badge.idle")}</span>;
 }

@@ -1,11 +1,13 @@
-export type GenerationMode = "reference" | "keyframes" | "first-last";
+import type { GenerationMode } from "@/lib/video/models";
+
+export type { GenerationMode } from "@/lib/video/models";
 export type CameraMode = "auto" | "locked" | "push-in" | "pull-back";
 export type MotionLevel = "auto" | "low" | "medium" | "high";
 export type ConsistencyLevel = "normal" | "high" | "very-high";
 
 export type PromptCompilerInput = {
   userPrompt: string;
-  referenceImageCount?: number;
+  referenceImageCount: number;
   generationMode: GenerationMode;
   cameraMode: CameraMode;
   motionLevel: MotionLevel;
@@ -18,22 +20,20 @@ export function resolveGenerationMode(
   requestedMode: GenerationMode,
   referenceImageCount: number,
 ): GenerationMode {
-  return requestedMode !== "reference" && referenceImageCount < 2
-    ? "reference"
-    : requestedMode;
+  void referenceImageCount;
+  return requestedMode;
 }
 
 const generationModePrompts: Record<GenerationMode, string[]> = {
   reference: [
     "Use the uploaded images as visual references. Preserve the identity, appearance, environment and visual style shown in the reference images.",
   ],
-  keyframes: [
+  "ordered-reference": [
     "Use the uploaded images as chronological keyframes in the exact order provided. Image 1 represents the beginning of the video, the intermediate images represent progressive stages of the action, and the final image represents the ending state. Generate smooth, natural and temporally coherent motion between these keyframes. Resolve minor visual inconsistencies between reference images automatically while preserving the main subject, environment and intended action.",
     "Treat the uploaded reference images as chronological keyframes in the exact order provided. Image 1 = 起始，中间图片 = 动作发展，最后图片 = 结束。",
   ],
-  "first-last": [
-    "Use the first uploaded image as the starting state and the final uploaded image as the ending state. Generate a smooth, natural and temporally coherent transition between them while preserving subject identity and environment consistency.",
-  ],
+  "first-frame": [],
+  "first-last": [],
 };
 
 const cameraPrompts: Partial<Record<CameraMode, string>> = {
@@ -55,9 +55,9 @@ const consistencyPrompts: Record<ConsistencyLevel, string> = {
 };
 
 export function buildFinalPrompt(input: PromptCompilerInput): string {
-  const referencePrompts = input.referenceImageCount === 0
-    ? []
-    : generationModePrompts[input.generationMode];
+  const referencePrompts = input.referenceImageCount > 0
+    ? generationModePrompts[input.generationMode]
+    : [];
 
   return [
     input.userPrompt.trim(),

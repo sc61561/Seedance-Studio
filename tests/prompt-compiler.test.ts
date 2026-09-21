@@ -11,7 +11,8 @@ describe("buildFinalPrompt", () => {
     expect(
       buildFinalPrompt({
         userPrompt: "一只橘猫在窗边伸懒腰",
-        generationMode: "keyframes",
+        generationMode: "ordered-reference",
+        referenceImageCount: 3,
         cameraMode: "push-in",
         motionLevel: "medium",
         consistencyLevel: "high",
@@ -31,6 +32,7 @@ describe("buildFinalPrompt", () => {
       buildFinalPrompt({
         userPrompt: "海边日落",
         generationMode: "reference",
+        referenceImageCount: 1,
         cameraMode: "auto",
         motionLevel: "auto",
         consistencyLevel: "normal",
@@ -42,25 +44,36 @@ describe("buildFinalPrompt", () => {
     ].join("\n\n"));
   });
 
-  it("首尾帧模式仅编译首尾状态转场指令", () => {
-    expect(
-      buildFinalPrompt({
+  it.each(["first-frame", "first-last"] as const)(
+    "%s 使用方舟原生图片角色，不附加参考、关键帧或转场指令",
+    (generationMode) => {
+      const prompt = buildFinalPrompt({
         userPrompt: "人物从站立变为坐下",
-        generationMode: "first-last",
+        generationMode,
+        referenceImageCount: generationMode === "first-frame" ? 1 : 2,
         cameraMode: "auto",
         motionLevel: "auto",
         consistencyLevel: "normal",
-      }),
-    ).toContain("Use the first uploaded image as the starting state and the final uploaded image as the ending state.");
-  });
+      });
 
-  it.each<readonly ["keyframes" | "first-last", number]>([
-    ["keyframes", 0],
-    ["keyframes", 1],
+      expect(prompt).toBe([
+        "人物从站立变为坐下",
+        "Maintain visual and temporal consistency throughout the video.",
+      ].join("\n\n"));
+      expect(prompt).not.toMatch(/reference|keyframe|starting state|ending state|transition/i);
+    },
+  );
+
+  it.each([
+    ["ordered-reference", 0],
+    ["ordered-reference", 1],
+    ["first-frame", 0],
+    ["first-frame", 2],
     ["first-last", 0],
     ["first-last", 1],
-  ])("图片不足时将 %s 降级为普通参考", (mode, imageCount) => {
-    expect(resolveGenerationMode(mode, imageCount)).toBe("reference");
+    ["first-last", 3],
+  ] as const)("解析模式时不会把 %s（%d 张图）静默降级", (mode, imageCount) => {
+    expect(resolveGenerationMode(mode, imageCount)).toBe(mode);
   });
 
   it("共享最终提示词长度上限", () => {

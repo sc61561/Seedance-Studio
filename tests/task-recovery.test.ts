@@ -1,252 +1,191 @@
 import { describe, expect, it, vi } from "vitest";
 
 import {
+  classifyTaskPollingResponse,
   recoverActiveVideoTask,
-  type RecoveredVideoTask,
+  retryTaskPollDelayMs,
 } from "@/lib/video/task-recovery";
 import {
   activeVideoTaskStorageKey,
-  persistActiveVideoTask,
+  readActiveVideoTask,
   type ActiveTaskStorage,
 } from "@/lib/video/task-storage";
 
 class MemoryStorage implements ActiveTaskStorage {
   private readonly values = new Map<string, string>();
-
-  getItem(key: string): string | null {
-    return this.values.get(key) ?? null;
-  }
-
-  setItem(key: string, value: string): void {
-    this.values.set(key, value);
-  }
-
-  removeItem(key: string): void {
-    this.values.delete(key);
-  }
+  getItem(key: string) { return this.values.get(key) ?? null; }
+  setItem(key: string, value: string) { this.values.set(key, value); }
+  removeItem(key: string) { this.values.delete(key); }
 }
 
 const now = 1_800_000_000_000;
+const owner = "a".repeat(64);
+const other = "b".repeat(64);
 
-function seedActiveTask(storage: ActiveTaskStorage) {
-  persistActiveVideoTask({
-    taskId: "cgt-recover-once",
+function seed(storage: MemoryStorage, version: 1 | 2 = 2) {
+  storage.setItem(activeVideoTaskStorageKey, JSON.stringify({
+    version,
+    ...(version === 2 ? { apiKeyFingerprint: owner } : {}),
+    taskId: "cgt-owner-task",
     status: "queued",
     createdAt: now,
-    resolution: "1080p",
-    aspectRatio: "9:16",
-    duration: 8,
-  }, storage);
+    model: "ep-team-video",
+    prompt: "never persist",
+  }));
 }
 
-describe("active task recovery controller", () => {
-  it.each(["queued", "processing"] as const)(
-    "makes one task request and schedules the next poll for %s",
-    async (status) => {
-      const storage = new MemoryStorage();
-      seedActiveTask(storage);
-      const fetchTask = vi.fn(async () => Response.json({
-        taskId: "cgt-recover-once",
-        status,
-      }));
-      const onRestore = vi.fn();
-      const onTask = vi.fn();
-      const onSchedule = vi.fn();
+function callbacks() {
+  return {
+    onRestore: vi.fn(),
+    onTask: vi.fn(),
+    onSchedule: vi.fn(),
+    onPause: vi.fn(),
+    onError: vi.fn(),
+    onTransientError: vi.fn(),
+  };
+}
 
-      expect(await recoverActiveVideoTask({
-        storage,
-        now,
-        online: true,
-        fetchTask,
-        onRestore,
-        onTask,
-        onSchedule,
-        onUnauthorized: vi.fn(),
-        onError: vi.fn(),
-        onTransientError: vi.fn(),
-      })).toBe(true);
-
-      expect(fetchTask).toHaveBeenCalledTimes(1);
-      expect(fetchTask).toHaveBeenCalledWith(
-        "/api/task/cgt-recover-once",
-        expect.objectContaining({ cache: "no-store" }),
-      );
-      expect(onRestore).toHaveBeenCalledTimes(1);
-      expect(onTask).toHaveBeenCalledWith({
-        taskId: "cgt-recover-once",
-        status,
-      });
-      expect(onSchedule).toHaveBeenCalledTimes(1);
-      expect(onSchedule).toHaveBeenCalledWith("cgt-recover-once");
-      expect(JSON.parse(storage.getItem(activeVideoTaskStorageKey)!)).toEqual(expect.objectContaining({
-        taskId: "cgt-recover-once",
-        status,
-        resolution: "1080p",
-        aspectRatio: "9:16",
-        duration: 8,
-      }));
-    },
-  );
-
-  it("forwards a successful video result and clears active storage", async () => {
+describe("active-task BYOK recovery", () => {
+  it("never queries a v2 task with another key, retains its ID and does not schedule", async () => {
     const storage = new MemoryStorage();
-    seedActiveTask(storage);
-    const onTask = vi.fn<(task: RecoveredVideoTask) => void>();
-    const onSchedule = vi.fn();
-
-    await recoverActiveVideoTask({
-      storage,
-      now,
-      online: true,
-      fetchTask: vi.fn(async () => Response.json({
-        taskId: "cgt-recover-once",
-        status: "succeeded",
-        videoUrl: "https://cdn.example.com/result.mp4",
-      })),
-      onRestore: vi.fn(),
-      onTask,
-      onSchedule,
-      onUnauthorized: vi.fn(),
-      onError: vi.fn(),
-      onTransientError: vi.fn(),
-    });
-
-    expect(onTask).toHaveBeenCalledWith({
-      taskId: "cgt-recover-once",
-      status: "succeeded",
-      videoUrl: "https://cdn.example.com/result.mp4",
-    });
-    expect(onSchedule).not.toHaveBeenCalled();
-    expect(storage.getItem(activeVideoTaskStorageKey)).toBeNull();
-  });
-
-  it("clears active storage when the provider reports failure", async () => {
-    const storage = new MemoryStorage();
-    seedActiveTask(storage);
-    const onTask = vi.fn();
-
-    await recoverActiveVideoTask({
-      storage,
-      now,
-      online: true,
-      fetchTask: vi.fn(async () => Response.json({
-        taskId: "cgt-recover-once",
-        status: "failed",
-        errorCode: "api.providerGenerationFailed",
-      })),
-      onRestore: vi.fn(),
-      onTask,
-      onSchedule: vi.fn(),
-      onUnauthorized: vi.fn(),
-      onError: vi.fn(),
-      onTransientError: vi.fn(),
-    });
-
-    expect(onTask).toHaveBeenCalledWith(expect.objectContaining({ status: "failed" }));
-    expect(storage.getItem(activeVideoTaskStorageKey)).toBeNull();
-  });
-
-  it("retains active storage and reports a missing API key on a 401", async () => {
-    const storage = new MemoryStorage();
-    seedActiveTask(storage);
-    const onUnauthorized = vi.fn();
-    const onTask = vi.fn();
-
-    await recoverActiveVideoTask({
-      storage,
-      now,
-      online: true,
-      fetchTask: vi.fn(async () => Response.json(
-        { code: "api.apiKeyRequired" },
-        { status: 401 },
-      )),
-      onRestore: vi.fn(),
-      onTask,
-      onSchedule: vi.fn(),
-      onUnauthorized,
-      onError: vi.fn(),
-      onTransientError: vi.fn(),
-    });
-
-    expect(onUnauthorized).toHaveBeenCalledTimes(1);
-    expect(onTask).not.toHaveBeenCalled();
-    expect(storage.getItem(activeVideoTaskStorageKey)).not.toBeNull();
-  });
-
-  it("restores offline state without making a request and schedules a retry", async () => {
-    const storage = new MemoryStorage();
-    seedActiveTask(storage);
+    seed(storage);
     const fetchTask = vi.fn();
-    const onSchedule = vi.fn();
+    const spies = callbacks();
 
-    await recoverActiveVideoTask({
-      storage,
-      now,
-      online: false,
-      fetchTask,
-      onRestore: vi.fn(),
-      onTask: vi.fn(),
-      onSchedule,
-      onUnauthorized: vi.fn(),
-      onError: vi.fn(),
-      onTransientError: vi.fn(),
-    });
+    await recoverActiveVideoTask({ storage, now, online: true,
+      apiKeyFingerprint: other, fetchTask, ...spies });
 
     expect(fetchTask).not.toHaveBeenCalled();
-    expect(onSchedule).toHaveBeenCalledWith("cgt-recover-once");
-    expect(storage.getItem(activeVideoTaskStorageKey)).not.toBeNull();
+    expect(spies.onRestore).toHaveBeenCalledWith(expect.objectContaining({ taskId: "cgt-owner-task" }));
+    expect(spies.onPause).toHaveBeenCalledWith("cgt-owner-task", "key-mismatch");
+    expect(spies.onSchedule).not.toHaveBeenCalled();
+    expect(readActiveVideoTask(storage, now)?.taskId).toBe("cgt-owner-task");
+  });
+
+  it("queries with the matching session fetcher and promotes a legacy v1 active task to v2", async () => {
+    const storage = new MemoryStorage();
+    seed(storage, 1);
+    const fetchTask = vi.fn(async () => Response.json({ taskId: "cgt-owner-task", status: "processing" }));
+    const spies = callbacks();
+
+    await recoverActiveVideoTask({ storage, now, online: true,
+      apiKeyFingerprint: owner, fetchTask, ...spies });
+
+    expect(fetchTask).toHaveBeenCalledTimes(1);
+    expect(fetchTask).toHaveBeenCalledWith("/api/task/cgt-owner-task", expect.objectContaining({ cache: "no-store" }));
+    expect(spies.onTask).toHaveBeenCalledWith(expect.objectContaining({ status: "processing" }));
+    expect(spies.onSchedule).toHaveBeenCalledWith("cgt-owner-task", 5_000);
+    expect(readActiveVideoTask(storage, now)).toMatchObject({
+      version: 2,
+      apiKeyFingerprint: owner,
+      taskId: "cgt-owner-task",
+      status: "processing",
+    });
+    expect(storage.getItem(activeVideoTaskStorageKey)).not.toContain("never persist");
+  });
+
+  it.each([400, 410])("clears a definitely invalid task on HTTP %i", async (status) => {
+    const storage = new MemoryStorage(); seed(storage);
+    const spies = callbacks();
+    await recoverActiveVideoTask({ storage, now, online: true, apiKeyFingerprint: owner,
+      fetchTask: async () => Response.json({ code: "api.taskIdInvalid" }, { status }), ...spies });
+    expect(storage.getItem(activeVideoTaskStorageKey)).toBeNull();
+    expect(spies.onError).toHaveBeenCalledTimes(1);
+    expect(spies.onSchedule).not.toHaveBeenCalled();
   });
 
   it.each([
-    ["503 response", async () => Response.json({ code: "api.providerBusy" }, { status: 503 })],
-    ["401 upstream provider auth response", async () => Response.json({ code: "api.providerAuthFailed" }, { status: 401 })],
-    ["403 provider auth response", async () => Response.json({ code: "api.providerAuthFailed" }, { status: 403 })],
-    ["malformed response", async () => Response.json({ unexpected: true })],
-    ["invalid JSON response", async () => new Response("not-json", { status: 200 })],
-    ["network failure", async () => { throw new TypeError("fetch failed"); }],
-  ])("retains and reschedules an active task after transient %s", async (_label, fetchTask) => {
-    const storage = new MemoryStorage();
-    seedActiveTask(storage);
-    const onSchedule = vi.fn();
-    const onTransientError = vi.fn();
-
-    await recoverActiveVideoTask({
-      storage,
-      now,
-      online: true,
-      fetchTask,
-      onRestore: vi.fn(),
-      onTask: vi.fn(),
-      onSchedule,
-      onUnauthorized: vi.fn(),
-      onError: vi.fn(),
-      onTransientError,
-    });
-
-    expect(storage.getItem(activeVideoTaskStorageKey)).not.toBeNull();
-    expect(onSchedule).toHaveBeenCalledWith("cgt-recover-once");
-    expect(onTransientError).toHaveBeenCalledTimes(1);
+    ["api.apiKeyInvalid"],
+    ["api.providerInvalidParameter"],
+    [undefined],
+  ])("retains an ambiguous HTTP 400 response (%s)", async (code) => {
+    const storage = new MemoryStorage(); seed(storage);
+    const spies = callbacks();
+    await recoverActiveVideoTask({ storage, now, online: true, apiKeyFingerprint: owner,
+      fetchTask: async () => Response.json(code ? { code } : {}, { status: 400 }), ...spies });
+    expect(readActiveVideoTask(storage, now)?.taskId).toBe("cgt-owner-task");
+    expect(spies.onPause).toHaveBeenCalledWith("cgt-owner-task", "invalid-response");
+    expect(spies.onError).not.toHaveBeenCalled();
   });
 
-  it("clears an invalid or expired task id after a definitive 404", async () => {
-    const storage = new MemoryStorage();
-    seedActiveTask(storage);
-    const onError = vi.fn();
+  it.each([
+    [401, "api.apiKeyRequired", "unauthorized"],
+    [403, "api.providerPermissionDenied", "unauthorized"],
+    [404, "api.taskIdInvalid", "not-found"],
+    [404, undefined, "not-found"],
+  ] as const)("pauses and retains HTTP %i / %s", async (status, code, reason) => {
+    const storage = new MemoryStorage(); seed(storage);
+    const spies = callbacks();
+    await recoverActiveVideoTask({ storage, now, online: true, apiKeyFingerprint: owner,
+      fetchTask: async () => Response.json(code ? { code } : {}, { status }), ...spies });
+    expect(storage.getItem(activeVideoTaskStorageKey)).not.toBeNull();
+    expect(spies.onPause).toHaveBeenCalledWith("cgt-owner-task", reason);
+    expect(spies.onSchedule).not.toHaveBeenCalled();
+  });
 
-    await recoverActiveVideoTask({
-      storage,
-      now,
-      online: true,
-      fetchTask: async () => Response.json({ code: "api.taskIdInvalid" }, { status: 404 }),
-      onRestore: vi.fn(),
-      onTask: vi.fn(),
-      onSchedule: vi.fn(),
-      onUnauthorized: vi.fn(),
-      onError,
-      onTransientError: vi.fn(),
-    });
+  it("does not follow a different task ID in a successful response", async () => {
+    const storage = new MemoryStorage(); seed(storage);
+    const spies = callbacks();
+    await recoverActiveVideoTask({ storage, now, online: true, apiKeyFingerprint: owner,
+      fetchTask: async () => Response.json({ taskId: "cgt-other", status: "processing" }), ...spies });
+    expect(readActiveVideoTask(storage, now)?.taskId).toBe("cgt-owner-task");
+    expect(spies.onTask).not.toHaveBeenCalled();
+    expect(spies.onPause).toHaveBeenCalledWith("cgt-owner-task", "invalid-response");
+  });
 
+  it("clears only a genuine terminal result for the same task ID", async () => {
+    const storage = new MemoryStorage(); seed(storage);
+    const spies = callbacks();
+    await recoverActiveVideoTask({ storage, now, online: true, apiKeyFingerprint: owner,
+      fetchTask: async () => Response.json({ taskId: "cgt-owner-task", status: "succeeded", videoUrl: "https://example.com/video.mp4" }), ...spies });
     expect(storage.getItem(activeVideoTaskStorageKey)).toBeNull();
-    expect(onError).toHaveBeenCalledWith({ code: "api.taskIdInvalid" });
+    expect(spies.onTask).toHaveBeenCalledWith(expect.objectContaining({ status: "succeeded" }));
+  });
+
+  it("does not mutate or schedule when an in-flight request is aborted", async () => {
+    const storage = new MemoryStorage(); seed(storage);
+    const controller = new AbortController();
+    const spies = callbacks();
+    const pending = recoverActiveVideoTask({ storage, now, online: true,
+      apiKeyFingerprint: owner, signal: controller.signal,
+      fetchTask: async () => { controller.abort(); return Response.json({ taskId: "cgt-owner-task", status: "succeeded" }); }, ...spies });
+    await pending;
+    expect(storage.getItem(activeVideoTaskStorageKey)).not.toBeNull();
+    expect(spies.onTask).not.toHaveBeenCalled();
+    expect(spies.onSchedule).not.toHaveBeenCalled();
+  });
+
+  it("retries network, offline, rate limit, and server errors with bounded delays", async () => {
+    const cases = [
+      { online: false, fetchTask: vi.fn(), status: undefined },
+      { online: true, fetchTask: vi.fn(async () => { throw new TypeError("network"); }), status: undefined },
+      { online: true, fetchTask: vi.fn(async () => Response.json({}, { status: 429, headers: { "Retry-After": "90" } })), status: 429 },
+      { online: true, fetchTask: vi.fn(async () => Response.json({}, { status: 503 })), status: 503 },
+    ];
+    for (const item of cases) {
+      const storage = new MemoryStorage(); seed(storage);
+      const spies = callbacks();
+      await recoverActiveVideoTask({ storage, now, online: item.online,
+        apiKeyFingerprint: owner, retryAttempt: 1, fetchTask: item.fetchTask, ...spies });
+      expect(storage.getItem(activeVideoTaskStorageKey)).not.toBeNull();
+      expect(spies.onSchedule).toHaveBeenCalledWith("cgt-owner-task", item.status === 429 ? 60_000 : 10_000);
+      expect(spies.onPause).not.toHaveBeenCalled();
+    }
+  });
+
+  it("caps exponential retries and resets the next active poll to five seconds", () => {
+    expect(retryTaskPollDelayMs(0)).toBe(5_000);
+    expect(retryTaskPollDelayMs(1)).toBe(10_000);
+    expect(retryTaskPollDelayMs(2)).toBe(20_000);
+    expect(retryTaskPollDelayMs(3)).toBe(40_000);
+    expect(retryTaskPollDelayMs(4)).toBe(60_000);
+    expect(retryTaskPollDelayMs(40)).toBe(60_000);
+    expect(classifyTaskPollingResponse(200, { taskId: "cgt-owner-task", status: "queued" }, "cgt-owner-task", 4)).toMatchObject({ kind: "active", delayMs: 5_000 });
+  });
+
+  it("accepts an HTTP-date Retry-After while capping the delay", () => {
+    const date = new Date(Date.now() + 30_000).toUTCString();
+    expect(retryTaskPollDelayMs(0, date)).toBeGreaterThanOrEqual(28_000);
+    expect(retryTaskPollDelayMs(0, date)).toBeLessThanOrEqual(30_000);
   });
 });

@@ -51,6 +51,16 @@ function request(url: string, overrides: Record<string, unknown> = {}) {
 }
 
 describe("service worker", () => {
+  it("activates shell v2 and removes only earlier Seedance shell caches", async () => {
+    const { cacheStorage, handlers, self } = loadServiceWorker();
+    cacheStorage.keys.mockResolvedValue(["seedance-shell-v1", "seedance-shell-v2", "unrelated-cache"]);
+    let activated: Promise<unknown> | undefined;
+    handlers.get("activate")?.({ waitUntil: (value: Promise<unknown>) => { activated = value; } });
+    await activated;
+    expect(cacheStorage.delete).toHaveBeenCalledExactlyOnceWith("seedance-shell-v1");
+    expect(self.clients.claim).toHaveBeenCalledTimes(1);
+  });
+
   it("pre-caches only the public offline shell and install assets", async () => {
     const { cache, handlers } = loadServiceWorker();
     let installed: Promise<unknown> | undefined;

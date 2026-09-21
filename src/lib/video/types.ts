@@ -1,3 +1,8 @@
+import type {
+  GenerationMode,
+  OfficialSeedanceModelId,
+} from "@/lib/video/models";
+
 export type VideoTaskState =
   | "idle"
   | "uploading"
@@ -10,6 +15,9 @@ export type VideoTaskState =
 export interface CreateVideoInput {
   provider: "seedance";
   model: string;
+  modelProfile?: OfficialSeedanceModelId;
+  generationMode?: GenerationMode;
+  generateAudio?: boolean;
   prompt: string;
   duration?: number;
   resolution?: string;
@@ -28,4 +36,6 @@ export interface VideoTaskStatus {
   videoUrl?: string;
   // Stable error code localized on the client (see src/lib/i18n/messages.ts).
   errorCode?: string;
+  errorDetail?: string;
+  requestId?: string;
 }

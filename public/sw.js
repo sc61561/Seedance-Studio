@@ -1,4 +1,4 @@
-const APP_CACHE = "seedance-shell-v1";
+const APP_CACHE = "seedance-shell-v2";
 const CACHE_PREFIX = "seedance-shell-";
 const PRECACHE_URLS = [
   "/offline.html",

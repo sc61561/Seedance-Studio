@@ -1,12 +1,15 @@
+import { isTaskKeyFingerprint } from "@/lib/client/api-key-fingerprint";
+
 export const activeVideoTaskStorageKey = "seedance.activeTask";
 export const activeVideoTaskTtlMs = 24 * 60 * 60 * 1_000;
 
-const activeVideoTaskVersion = 1 as const;
+const activeVideoTaskVersion = 2 as const;
 const futureClockSkewMs = 5 * 60 * 1_000;
 
 export type PersistedVideoTaskStatus = "queued" | "processing";
 
 export type PersistableVideoTask = {
+  apiKeyFingerprint: string;
   taskId: string;
   status: PersistedVideoTaskStatus;
   createdAt: number;
@@ -16,9 +19,9 @@ export type PersistableVideoTask = {
   duration?: number;
 };
 
-export type PersistedVideoTask = PersistableVideoTask & {
-  version: typeof activeVideoTaskVersion;
-};
+export type PersistedVideoTask =
+  | (Omit<PersistableVideoTask, "apiKeyFingerprint"> & { version: 1 })
+  | (PersistableVideoTask & { version: typeof activeVideoTaskVersion });
 
 export type ActiveTaskStorage = Pick<Storage, "getItem" | "setItem" | "removeItem">;
 
@@ -44,7 +47,8 @@ function isPersistedVideoTask(value: unknown, now: number): value is PersistedVi
   const task = value as Record<string, unknown>;
   const createdAt = task.createdAt;
 
-  return task.version === activeVideoTaskVersion
+  return (task.version === 1 || task.version === activeVideoTaskVersion)
+    && (task.version !== activeVideoTaskVersion || isTaskKeyFingerprint(task.apiKeyFingerprint))
     && typeof task.taskId === "string"
     && task.taskId.length > 0
     && task.taskId.length <= 200
@@ -61,8 +65,7 @@ function isPersistedVideoTask(value: unknown, now: number): value is PersistedVi
 }
 
 function sanitizeTask(task: PersistedVideoTask): PersistedVideoTask {
-  return {
-    version: activeVideoTaskVersion,
+  const fields = {
     taskId: task.taskId,
     status: task.status,
     createdAt: task.createdAt,
@@ -71,6 +74,9 @@ function sanitizeTask(task: PersistedVideoTask): PersistedVideoTask {
     ...(task.aspectRatio ? { aspectRatio: task.aspectRatio } : {}),
     ...(Number.isInteger(task.duration) ? { duration: task.duration } : {}),
   };
+  return task.version === activeVideoTaskVersion
+    ? { version: activeVideoTaskVersion, apiKeyFingerprint: task.apiKeyFingerprint, ...fields }
+    : { version: 1, ...fields };
 }
 
 export function persistActiveVideoTask(
@@ -78,10 +84,11 @@ export function persistActiveVideoTask(
   storage?: ActiveTaskStorage,
 ): boolean {
   const target = browserStorage(storage);
-  if (!target) return false;
+  if (!target || !isTaskKeyFingerprint(task.apiKeyFingerprint)) return false;
 
   const record = sanitizeTask({
     version: activeVideoTaskVersion,
+    apiKeyFingerprint: task.apiKeyFingerprint,
     taskId: task.taskId,
     status: task.status,
     createdAt: task.createdAt,

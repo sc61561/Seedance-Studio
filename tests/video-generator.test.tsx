@@ -2,6 +2,9 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 
 import {
+  ControlAdjustmentNotice,
+  FinalPromptPreview,
+  ModelTargetControls,
   NetworkStatusBanner,
   GeneratingStateDescription,
   MobileSubmitAction,
@@ -12,6 +15,8 @@ import {
   VideoGenerator,
 } from "@/components/studio/video-generator";
 import { I18nProvider } from "@/lib/i18n/context";
+import { buildGenerationRequestSnapshot } from "@/lib/video/generation-request";
+import { resolveSeedanceTarget } from "@/lib/video/models";
 
 describe("VideoGenerator", () => {
   it("初始状态要求填写提示词才能生成（默认中文）", () => {
@@ -24,22 +29,33 @@ describe("VideoGenerator", () => {
     expect(markup).toContain("请输入你想生成的视频内容");
     expect(markup).toContain('maxLength="4000"');
     expect(markup).toContain("生成模型");
-    expect(markup).not.toContain("已配置模型");
-    expect(markup).toContain("按请求使用用户 Key");
-    expect(markup).not.toContain("选择模型");
+    expect(markup).toContain("选择模型");
+    expect(markup).toContain('value="doubao-seedance-2-5-260628"');
+    expect(markup).toContain('value="doubao-seedance-2-0-260128"');
+    expect(markup).toContain('value="doubao-seedance-2-0-fast-260128"');
+    expect(markup).toContain('value="doubao-seedance-2-0-mini-260615"');
+    expect(markup).toContain('value="custom-endpoint"');
     expect(markup).toContain("分辨率");
     expect(markup).toContain("画面比例");
     expect(markup).toContain("视频时长");
     expect(markup).toContain('type="range"');
-    expect(markup).toContain('min="2"');
+    expect(markup).toContain('min="4"');
     expect(markup).toContain('max="30"');
     expect(markup).toContain('step="1"');
     expect(markup).toContain('aria-valuetext="5 秒"');
-    expect(markup).toContain('--range-progress:10.714285714285714%');
+    expect(markup).toContain('--range-progress:3.8461538461538463%');
     expect(markup).toContain('multiple=""');
     expect(markup).toContain("最多 10 张");
     expect(markup).toContain("生成模式");
-    expect(markup).toContain("连续关键帧");
+    expect(markup).toContain('value="reference"');
+    expect(markup).toContain('value="ordered-reference"');
+    expect(markup).toContain('value="first-frame"');
+    expect(markup).toContain('value="first-last"');
+    expect(markup).not.toContain('value="keyframes"');
+    expect(markup).toContain("提示词辅助");
+    expect(markup).toContain("生成音频");
+    expect(markup).toMatch(/type="checkbox"[^>]*checked/);
+    expect(markup).toContain("实际提交的提示词");
     expect(markup).toContain("高级设置");
     expect(markup).toContain('aria-expanded="false"');
     expect(markup).toContain('class="studio-advanced-content mt-4 grid gap-4 sm:grid-cols-3" hidden=""');
@@ -51,6 +67,67 @@ describe("VideoGenerator", () => {
     expect(markup).toContain("studio-mobile-submit-bar");
     expect(markup).toContain("has-mobile-action");
     expect(markup).toMatch(/<button[^>]*disabled/);
+  });
+
+  it("自定义 Endpoint 显示能力档案控件和不发送到 Ark 的说明", () => {
+    const markup = renderToStaticMarkup(
+      <I18nProvider>
+        <ModelTargetControls
+          selection="custom-endpoint"
+          customEndpoint="ep-team-video"
+          customProfile="doubao-seedance-2-0-260128"
+          disabled={false}
+          onSelectionChange={() => undefined}
+          onEndpointChange={() => undefined}
+          onProfileChange={() => undefined}
+        />
+      </I18nProvider>,
+    );
+
+    expect(markup).toContain("Endpoint ID");
+    expect(markup).toContain('value="ep-team-video"');
+    expect(markup).toContain("能力档案");
+    expect(markup).toContain("不会发送给火山方舟");
+    expect(markup).toContain('value="doubao-seedance-2-0-260128" selected');
+  });
+
+  it("模型调整会显示可见通知", () => {
+    const markup = renderToStaticMarkup(
+      <I18nProvider>
+        <ControlAdjustmentNotice visible />
+      </I18nProvider>,
+    );
+
+    expect(markup).toContain('role="status"');
+    expect(markup).toContain("已按当前模型或模式的能力调整");
+  });
+
+  it("实际提示词预览显示与请求快照完全相同的文本和字符数", () => {
+    const target = resolveSeedanceTarget("doubao-seedance-2-5-260628")!;
+    const snapshot = buildGenerationRequestSnapshot({
+      target,
+      userPrompt: "一只猫抬头",
+      generationMode: "first-frame",
+      generateAudio: true,
+      cameraMode: "auto",
+      motionLevel: "auto",
+      consistencyLevel: "normal",
+      duration: 5,
+      resolution: "720p",
+      aspectRatio: "adaptive",
+      referenceImagePayload: { referenceImageUrls: ["https://example.com/first.png"] },
+    });
+    const markup = renderToStaticMarkup(
+      <I18nProvider>
+        <FinalPromptPreview snapshot={snapshot} />
+      </I18nProvider>,
+    );
+
+    expect(markup).toContain("实际提交的提示词");
+    expect(markup).toContain("一只猫抬头");
+    expect(markup).toContain(`${snapshot.finalPrompt.length} / 4000`);
+    expect(snapshot.finalPrompt).not.toContain("起始");
+    expect(JSON.parse(snapshot.body).prompt).toBe(snapshot.finalPrompt);
   });
 
   it("为触屏参考图提供有边界状态的移动和删除控件", () => {
@@ -110,6 +187,17 @@ describe("VideoGenerator", () => {
     expect(inactiveMarkup).toBe("");
     expect(activeMarkup).toContain('role="status"');
     expect(activeMarkup).toContain("已恢复上次的视频任务，正在继续查询进度");
+  });
+
+  it("暂停的任务保留编号并指示恢复原 Key，而非显示成可新建任务", () => {
+    const markup = renderToStaticMarkup(
+      <I18nProvider>
+        <TaskRecoveryNotice restored pauseReason="key-mismatch" taskId="cgt-owner-task" />
+      </I18nProvider>,
+    );
+    expect(markup).toContain("cgt-owner-task");
+    expect(markup).toContain("原来的 API Key");
+    expect(markup).not.toContain("正在继续查询进度");
   });
 
   it("恢复成功后将任务返回的视频地址渲染到播放和打开入口", () => {

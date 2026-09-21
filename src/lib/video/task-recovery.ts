@@ -5,150 +5,206 @@ import {
   type ActiveTaskStorage,
   type PersistedVideoTask,
 } from "@/lib/video/task-storage";
-import { isApiKeyUnauthorizedResponse } from "@/lib/client/api-key-storage";
 
 export type RecoveredVideoTask = {
   taskId: string;
   status: "queued" | "processing" | "succeeded" | "failed";
   videoUrl?: string;
   errorCode?: string;
+  errorDetail?: string;
+  requestId?: string;
 };
 
 export type RecoveryApiErrorBody = {
   code?: string;
   params?: Record<string, string | number>;
   detail?: string;
+  requestId?: string;
 };
 
-type TaskFetcher = (
-  input: string,
-  init: RequestInit,
-) => Promise<Response>;
+export type RecoveryPauseReason = "missing-key" | "key-mismatch" | "unauthorized" | "not-found" | "invalid-response";
 
-type ActiveTaskRecoveryOptions = {
+export type TaskPollingDecision =
+  | { kind: "active"; task: RecoveredVideoTask; delayMs: 5_000 }
+  | { kind: "terminal"; task: RecoveredVideoTask }
+  | { kind: "clear-terminal" }
+  | { kind: "pause"; reason: RecoveryPauseReason }
+  | { kind: "retry"; delayMs: number };
+
+type TaskFetcher = (input: string, init: RequestInit) => Promise<Response>;
+
+export type ActiveTaskRecoveryOptions = {
   storage?: ActiveTaskStorage;
   now?: number;
   online: boolean;
+  apiKeyFingerprint?: string;
+  retryAttempt?: number;
   signal?: AbortSignal;
   fetchTask?: TaskFetcher;
   onRestore: (task: PersistedVideoTask) => void;
   onTask: (task: RecoveredVideoTask) => void;
-  onSchedule: (taskId: string) => void;
-  onUnauthorized: () => void;
+  onSchedule: (taskId: string, delayMs: number) => void;
+  onPause: (taskId: string, reason: RecoveryPauseReason) => void;
   onError: (body?: RecoveryApiErrorBody, error?: unknown) => void;
   onTransientError: (body?: RecoveryApiErrorBody, error?: unknown) => void;
 };
 
-function isRecoveredVideoTask(value: unknown): value is RecoveredVideoTask {
-  if (!value || typeof value !== "object") return false;
-  const task = value as Record<string, unknown>;
-  return typeof task.taskId === "string"
-    && task.taskId.length > 0
-    && (
-      task.status === "queued"
-      || task.status === "processing"
-      || task.status === "succeeded"
-      || task.status === "failed"
-    )
-    && (task.videoUrl === undefined || typeof task.videoUrl === "string")
-    && (task.errorCode === undefined || typeof task.errorCode === "string");
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+function asErrorBody(value: unknown): RecoveryApiErrorBody | undefined {
+  if (!isRecord(value)) return undefined;
+  return {
+    ...(typeof value.code === "string" ? { code: value.code } : {}),
+    ...(typeof value.detail === "string" ? { detail: value.detail } : {}),
+    ...(typeof value.requestId === "string" ? { requestId: value.requestId } : {}),
+  };
+}
+
+function asRecoveredTask(value: unknown): RecoveredVideoTask | undefined {
+  if (!isRecord(value) || typeof value.taskId !== "string" || !value.taskId) return undefined;
+  if (!["queued", "processing", "succeeded", "failed"].includes(String(value.status))) return undefined;
+  if (value.videoUrl !== undefined && typeof value.videoUrl !== "string") return undefined;
+  if (value.errorCode !== undefined && typeof value.errorCode !== "string") return undefined;
+  return {
+    taskId: value.taskId,
+    status: value.status as RecoveredVideoTask["status"],
+    ...(typeof value.videoUrl === "string" ? { videoUrl: value.videoUrl } : {}),
+    ...(typeof value.errorCode === "string" ? { errorCode: value.errorCode } : {}),
+    ...(typeof value.errorDetail === "string" ? { errorDetail: value.errorDetail } : {}),
+    ...(typeof value.requestId === "string" ? { requestId: value.requestId } : {}),
+  };
+}
+
+export function retryTaskPollDelayMs(attempt: number, retryAfter?: string | null): number {
+  const boundedAttempt = Number.isFinite(attempt) ? Math.max(0, Math.min(4, Math.floor(attempt))) : 0;
+  const exponential = Math.min(5_000 * 2 ** boundedAttempt, 60_000);
+  if (!retryAfter) return exponential;
+  const value = retryAfter.trim();
+  const seconds = /^\d+(?:\.\d+)?$/.test(value) ? Number(value) : NaN;
+  const requestedMs = Number.isFinite(seconds)
+    ? seconds * 1_000
+    : Date.parse(value) - Date.now();
+  if (!Number.isFinite(requestedMs) || requestedMs < 0) return exponential;
+  return Math.min(60_000, Math.max(exponential, Math.ceil(requestedMs)));
+}
+
+export function classifyTaskPollingResponse(
+  status: number | undefined,
+  payload: unknown,
+  expectedTaskId: string,
+  retryAttempt = 0,
+  retryAfter?: string | null,
+): TaskPollingDecision {
+  if (status === undefined || status === 429 || (status >= 500 && status <= 599)) {
+    return { kind: "retry", delayMs: retryTaskPollDelayMs(retryAttempt, retryAfter) };
+  }
+  if (status === 410) return { kind: "clear-terminal" };
+  if (status === 400) {
+    return isRecord(payload) && payload.code === "api.taskIdInvalid"
+      ? { kind: "clear-terminal" }
+      : { kind: "pause", reason: "invalid-response" };
+  }
+  if (status === 401 || status === 403) return { kind: "pause", reason: "unauthorized" };
+  if (status === 404) return { kind: "pause", reason: "not-found" };
+  if (status < 200 || status >= 300) return { kind: "pause", reason: "invalid-response" };
+
+  const task = asRecoveredTask(payload);
+  if (!task || task.taskId !== expectedTaskId) return { kind: "pause", reason: "invalid-response" };
+  if (task.status === "queued" || task.status === "processing") {
+    return { kind: "active", task, delayMs: 5_000 };
+  }
+  return { kind: "terminal", task };
+}
+
+/** One query of a persisted task. The caller binds `fetchTask` to one key snapshot. */
 export async function recoverActiveVideoTask({
   storage,
   now = Date.now(),
   online,
+  apiKeyFingerprint,
+  retryAttempt = 0,
   signal,
   fetchTask = fetch,
   onRestore,
   onTask,
   onSchedule,
-  onUnauthorized,
+  onPause,
   onError,
   onTransientError,
 }: ActiveTaskRecoveryOptions): Promise<boolean> {
   const storedTask = readActiveVideoTask(storage, now);
-  if (!storedTask) return false;
+  if (!storedTask || signal?.aborted) return false;
 
   onRestore(storedTask);
+  if (signal?.aborted) return true;
+  if (!apiKeyFingerprint) {
+    onPause(storedTask.taskId, "missing-key");
+    return true;
+  }
+  if (storedTask.version === 2 && storedTask.apiKeyFingerprint !== apiKeyFingerprint) {
+    onPause(storedTask.taskId, "key-mismatch");
+    return true;
+  }
   if (!online) {
-    onSchedule(storedTask.taskId);
+    onTransientError();
+    onSchedule(storedTask.taskId, retryTaskPollDelayMs(retryAttempt));
     return true;
   }
 
   try {
-    const response = await fetchTask(
-      `/api/task/${encodeURIComponent(storedTask.taskId)}`,
-      { cache: "no-store", signal },
-    );
+    const response = await fetchTask(`/api/task/${encodeURIComponent(storedTask.taskId)}`, {
+      cache: "no-store",
+      signal,
+    });
     if (signal?.aborted) return true;
 
     let payload: unknown;
     try {
       payload = await response.json();
-    } catch (error) {
-      if (signal?.aborted) return true;
-      if (isTransientTaskPollingStatus(response.status)) {
-        onTransientError(undefined, error);
-        onSchedule(storedTask.taskId);
-        return true;
-      }
-      clearActiveVideoTask(storage);
-      onError(undefined, error);
-      return true;
+    } catch {
+      payload = undefined;
     }
     if (signal?.aborted) return true;
-    const errorBody = payload as RecoveryApiErrorBody;
-    if (isApiKeyUnauthorizedResponse(response.status, errorBody.code)) {
-      onUnauthorized();
-      return true;
-    }
-    if (!response.ok) {
-      if (isTransientTaskPollingResponse(response.status, errorBody.code)) {
-        onTransientError(errorBody);
-        onSchedule(storedTask.taskId);
-        return true;
-      }
+    const decision = classifyTaskPollingResponse(
+      response.status,
+      payload,
+      storedTask.taskId,
+      retryAttempt,
+      response.headers.get("Retry-After"),
+    );
+    const errorBody = asErrorBody(payload);
+    if (decision.kind === "retry") {
+      onTransientError(errorBody);
+      if (!signal?.aborted) onSchedule(storedTask.taskId, decision.delayMs);
+    } else if (decision.kind === "pause") {
+      onPause(storedTask.taskId, decision.reason);
+    } else if (decision.kind === "clear-terminal") {
       clearActiveVideoTask(storage);
-      onError(payload as RecoveryApiErrorBody);
-      return true;
-    }
-    if (!isRecoveredVideoTask(payload)) {
-      onTransientError();
-      onSchedule(storedTask.taskId);
-      return true;
-    }
-
-    onTask(payload);
-    if (payload.status === "queued" || payload.status === "processing") {
+      onError(errorBody);
+    } else if (decision.kind === "terminal") {
+      clearActiveVideoTask(storage);
+      onTask(decision.task);
+    } else {
       persistActiveVideoTask({
-        taskId: payload.taskId,
-        status: payload.status,
+        taskId: storedTask.taskId,
+        status: decision.task.status === "queued" ? "queued" : "processing",
         createdAt: storedTask.createdAt,
+        apiKeyFingerprint,
         model: storedTask.model,
         resolution: storedTask.resolution,
         aspectRatio: storedTask.aspectRatio,
         duration: storedTask.duration,
       }, storage);
-      onSchedule(storedTask.taskId);
-      return true;
+      onTask(decision.task);
+      if (!signal?.aborted) onSchedule(storedTask.taskId, decision.delayMs);
     }
-
-    clearActiveVideoTask(storage);
     return true;
   } catch (error) {
     if (signal?.aborted) return true;
     onTransientError(undefined, error);
-    onSchedule(storedTask.taskId);
+    if (!signal?.aborted) onSchedule(storedTask.taskId, retryTaskPollDelayMs(retryAttempt));
     return true;
   }
-}
-
-export function isTransientTaskPollingStatus(status: number): boolean {
-  return isTransientTaskPollingResponse(status);
-}
-
-export function isTransientTaskPollingResponse(status: number, code?: string): boolean {
-  if (isApiKeyUnauthorizedResponse(status, code)) return false;
-  return status !== 400 && status !== 404 && status !== 410;
 }

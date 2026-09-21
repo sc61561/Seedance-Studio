@@ -1,9 +1,10 @@
 export const maxReferenceImages = 10;
 
-// Vercel Functions reject request bodies above 4.5 MB. Keeping the raw image
-// budget at 3 MiB leaves room for multipart framing and for the ~4 MiB Base64
-// compatibility payload used only when object storage is not configured.
+// This decoded-byte limit is distinct from the serialized request-body limit:
+// Base64 overhead means a data-URL request can hit the body limit first.
 export const maxReferenceImageBytes = 3 * 1024 * 1024;
+
+export const maxGenerationRequestBytes = 4_000_000;
 
 export const acceptedReferenceImageTypes = new Set([
   "image/jpeg",

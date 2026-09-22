@@ -3,7 +3,7 @@
 <div align="center">
 
 <a href="https://seedance-studio-five.vercel.app/">
-  <img src="public/icons/icon-192.png" alt="Seedance Studio icon; open the web app" width="96" height="96">
+  <img src="public/icons/icon-512.png" alt="Seedance Studio icon; open the web app" width="96" height="96">
 </a>
 
 <h1>Seedance Studio</h1>

@@ -306,15 +306,6 @@
     line-height: 1.4;
   }
 
-  .studio-mark {
-    border: 1px solid var(--text);
-    border-radius: 0;
-    background: transparent;
-    color: var(--text);
-    font-weight: 800;
-    letter-spacing: -0.04em;
-  }
-
   .studio-eyebrow,
   .studio-index {
     color: var(--text-3);

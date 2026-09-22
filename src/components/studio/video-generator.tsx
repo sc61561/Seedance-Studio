@@ -2,6 +2,7 @@
 
 import type { CSSProperties, DragEvent, FormEvent } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import Image from "next/image";
 import {
   ArrowLeft,
   ArrowRight,
@@ -9,7 +10,6 @@ import {
   Check,
   ChevronDown,
   CircleAlert,
-  Clapperboard,
   Download,
   Eye,
   EyeOff,
@@ -574,8 +574,15 @@ export function VideoGenerator() {
       <div className="mx-auto w-full max-w-[1320px]">
         <header className="studio-topbar mb-9 flex items-center justify-between gap-4 pb-5 sm:mb-12">
           <div className="flex items-center gap-3">
-            <div className="studio-mark flex size-9 items-center justify-center" aria-hidden="true">
-              <Clapperboard className="size-4" strokeWidth={1.6} />
+            <div className="flex size-9 items-center justify-center" aria-hidden="true">
+              <Image
+                src="/icons/icon-192.png"
+                alt=""
+                width={36}
+                height={36}
+                className="size-9 object-contain"
+                priority
+              />
             </div>
             <div>
               <p className="text-sm font-medium tracking-tight text-[var(--text)]">Seedance Studio</p>

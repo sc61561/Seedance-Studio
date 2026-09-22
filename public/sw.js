@@ -1,4 +1,4 @@
-const APP_CACHE = "seedance-shell-v2";
+const APP_CACHE = "seedance-shell-v3";
 const CACHE_PREFIX = "seedance-shell-";
 const PRECACHE_URLS = [
   "/offline.html",
@@ -58,7 +58,6 @@ function shouldHandle(request) {
   return (
     url.pathname === "/offline.html" ||
     url.pathname === "/manifest.webmanifest" ||
-    url.pathname === "/favicon.ico" ||
     url.pathname.startsWith("/_next/static/") ||
     url.pathname.startsWith("/icons/")
   );

@@ -9,6 +9,7 @@ Seedance Studio is a Chinese-first Next.js PWA for generating Seedance videos wi
 - Install: `npm install`
 - Develop: `npm run dev` (default `http://localhost:3000`)
 - Verify: `npm test`, `npm run lint`, `npm run typecheck`, `npm run build`
+- Optional Cloudflare image proxy: `npm run worker:test` (Node.js 22+; local workerd and a mocked Ark upstream, no paid jobs).
 
 ## Stack
 
@@ -22,6 +23,7 @@ Next.js 16 App Router, React 19, TypeScript, Tailwind CSS 4, Vitest, and Vercel-
 - `src/lib/security/`: API-key parsing and rate limiting
 - `src/lib/client/`: browser-only API-key storage
 - `tests/`: Vitest coverage for UI, routes, provider, PWA, and security contracts
+- `workers/seedance-proxy/`: optional streaming image proxy; see `docs/cloudflare-image-proxy.md` for deployment and live verification requirements
 
 ## Conventions
 
@@ -35,6 +37,8 @@ Next.js 16 App Router, React 19, TypeScript, Tailwind CSS 4, Vitest, and Vercel-
 ## Current State
 
 The current architecture is PWA + BYOK with no Vercel Blob dependency. `README.md` is the current usage and deployment contract; dated files under `docs/superpowers/` are planning history, not runtime authority.
+
+Default uploads retain the 3 MiB image limits and 4,000,000-byte Vercel request limit. An explicitly configured `NEXT_PUBLIC_SEEDANCE_WORKER_ORIGIN` enables 15 MiB single / 45 MiB combined images; only oversized generation requests use that Worker. Its free-tier CPU budget and Ark input compatibility require deployed validation, not just passing local tests. Do not configure a third-party proxy or claim production readiness without that validation.
 
 <!-- BEGIN:nextjs-agent-rules -->
 

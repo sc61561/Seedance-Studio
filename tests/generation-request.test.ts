@@ -26,6 +26,39 @@ const commonInput = {
 };
 
 describe("generation request snapshot", () => {
+  it("only a configured Worker receives large image bodies; small/default and text-only requests stay local", async () => {
+    const dataUrl = `data:image/png;base64,${"A".repeat(5_000_000)}`;
+    const input = {
+      ...commonInput, generationMode: "reference" as const,
+      target: resolveSeedanceTarget("doubao-seedance-2-5-260628")!,
+      referenceImagePayload: { referenceImageDataUrls: [dataUrl] },
+    };
+    const local = buildGenerationRequestSnapshot(input);
+    expect(local.exceedsByteLimit).toBe(true);
+    expect(local.endpoint).toBe("/api/generate");
+    const worker = buildGenerationRequestSnapshot({ ...input, workerOrigin: "https://upload.example.com" });
+    expect(worker.exceedsByteLimit).toBe(false);
+    expect(worker.endpoint).toBe("https://upload.example.com/api/generate");
+    const request = buildGenerationRequestInit(worker, "current-user-key");
+    expect(request.body).toBeInstanceOf(Blob);
+    expect(request.credentials).toBe("omit");
+    expect(new Headers(request.headers).get("x-seedance-api-key")).toBe("current-user-key");
+    expect(new Headers(request.headers).get("content-type")).toBe("application/x-seedance-upload");
+    expect(await (request.body as Blob).text()).not.toContain("current-user-key");
+    const textOnly = buildGenerationRequestSnapshot({ ...input, workerOrigin: "https://upload.example.com", referenceImagePayload: {} });
+    expect(textOnly.endpoint).toBe("/api/generate");
+    const small = buildGenerationRequestSnapshot({ ...input, workerOrigin: "https://upload.example.com", referenceImagePayload: { referenceImageDataUrls: ["data:image/png;base64,iVBORw0KGgo="] } });
+    expect(small.endpoint).toBe("/api/generate");
+  });
+
+  it("does not reuse a cached body when the upload destination changes", () => {
+    const cache = createGenerationRequestSnapshotCache();
+    const input = { ...commonInput, target: resolveSeedanceTarget("doubao-seedance-2-5-260628")!,
+      referenceImagePayload: { referenceImageDataUrls: [`data:image/png;base64,${"A".repeat(5_000_000)}`] },
+    };
+    expect(cache.get(input).exceedsByteLimit).toBe(true);
+    expect(cache.get({ ...input, workerOrigin: "https://upload.example.com" }).exceedsByteLimit).toBe(false);
+  });
   it("预览提示词与解析后的请求 prompt 完全一致，且官方模型不带 profile", () => {
     const snapshot = buildGenerationRequestSnapshot({
       ...commonInput,

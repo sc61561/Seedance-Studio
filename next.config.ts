@@ -1,4 +1,5 @@
 import type { NextConfig } from "next";
+import { configuredWorkerOrigin } from "./src/lib/video/worker-upload";
 
 const nextConfig: NextConfig = {
   experimental: {
@@ -21,7 +22,7 @@ const nextConfig: NextConfig = {
               "form-action 'self'",
               "img-src 'self' data: blob: https:",
               "media-src 'self' data: blob: https:",
-              "connect-src 'self' https://ark.cn-beijing.volces.com",
+              ["connect-src 'self' https://ark.cn-beijing.volces.com", configuredWorkerOrigin()].filter(Boolean).join(" "),
               "script-src 'self' 'unsafe-inline' 'unsafe-eval'",
               "style-src 'self' 'unsafe-inline'",
             ].join("; "),

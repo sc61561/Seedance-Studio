@@ -1,5 +1,5 @@
 import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   ControlAdjustmentNotice,
@@ -19,6 +19,15 @@ import { buildGenerationRequestSnapshot } from "@/lib/video/generation-request";
 import { resolveSeedanceTarget } from "@/lib/video/models";
 
 describe("VideoGenerator", () => {
+  afterEach(() => vi.unstubAllEnvs());
+  it("discloses the configured large-image proxy and its actual per-file and total limits", () => {
+    vi.stubEnv("NEXT_PUBLIC_SEEDANCE_WORKER_ORIGIN", "https://upload.example.com");
+    const markup = renderToStaticMarkup(<I18nProvider><VideoGenerator /></I18nProvider>);
+    expect(markup).toContain("15 MB");
+    expect(markup).toContain("45 MB");
+    expect(markup).toContain("https://upload.example.com");
+    expect(markup).toContain("Cloudflare");
+  });
   it("初始状态要求填写提示词才能生成（默认中文）", () => {
     const markup = renderToStaticMarkup(
       <I18nProvider>

@@ -26,6 +26,7 @@ This open-source app supports public Vercel deployments with a BYOK (Bring Your 
 - The key is hidden by default and can be saved, changed, or cleared.
 - The key is stored only in this device's browser `localStorage`. It is not written to a database, task record, URL, log, or GitHub.
 - For generation and task queries, the browser temporarily sends the key in the `x-seedance-api-key` header to the **current site's Next.js/Vercel proxy**. The server forwards it to Volcengine Ark for that request only. The app does not log or persist the key on the server.
+- If the deployer enables the optional Cloudflare image proxy, large-image generation temporarily sends the key and images through that Worker; its origin is disclosed in the UI. Small requests and polling still use Next.js.
 - Deployers do not need to set `SEEDANCE_API_KEY` on Vercel. Generations use each user's own Volcengine Ark account and quota.
 
 A locally stored key can still be read by a malicious browser extension or through XSS. Follow your organization's security policy when using a company or team key. If that policy forbids sending the key through a public site's proxy, self-host the app instead. Do not enter a key on an untrusted site or device.
@@ -61,7 +62,7 @@ This version does not require `SEEDANCE_API_KEY`, `APP_ACCESS_PASSWORD`, `SESSIO
 
 1. Paste your Volcengine Ark Seedance API key into the settings area and select “Save key”.
 2. Choose a model and generation mode, then set a supported resolution, aspect ratio, and duration. The duration range depends on the selected model profile.
-3. Optionally add up to 10 PNG, JPEG, or WebP reference images. The browser reads them as Data URLs. Each image and the combined set must stay within 3 MB.
+3. Optionally add up to 10 PNG, JPEG, or WebP reference images. Default: 3 MB per image and combined. With the optional Cloudflare image proxy: 15 MB per image / 45 MB combined, without recompression. Follow the displayed limits and the model's actual capabilities.
 4. Expand “Actual submitted prompt” to review the appended instructions and character count, then select “Generate video”. The browser polls the task status and progressively backs off after network errors or rate limits. On the same device, you can refresh the page and resume an unfinished task.
 5. When the video is ready, preview, open, download, or share it. The result URL may expire according to Volcengine Ark's policy, so save the video promptly.
 
@@ -78,7 +79,7 @@ These are the app's validation profiles. They do not guarantee that your account
 
 Image modes are regular reference (zero to the model's limit; zero images means text-to-video), ordered reference (at least two images, with order described by prompt assistance), native first frame (exactly one image), and native first and last frames (exactly two images). Ordered references are still sent as `reference_image`; native frames use the Volcengine `first_frame` and `last_frame` roles. Seedance 2.5 requires the `adaptive` ratio for native first-frame and first/last-frame modes. Camera, motion intensity, and consistency settings are **prompt assistance**, not native model parameters. The “Generate audio” switch sends `generate_audio` to the API.
 
-4K output may use HEVC or 10-bit encoding, which some browsers cannot preview, but the file can still be downloaded. Each image and the combined image set must stay within 3 MB; the serialized generation request must stay within 4,000,000 bytes; and the final prompt is limited to 4,000 characters. When you change models, the app adjusts incompatible parameters with a notice, but it does not delete or reorder your reference images.
+4K output may use HEVC or 10-bit encoding, which some browsers cannot preview, but the file can still be downloaded. Default uploads allow 3 MB per image and combined, with a 4,000,000-byte serialized request limit. The optional image proxy allows 15 MB per image / 45 MB combined (file sizes use MiB). The final prompt is limited to 4,000 characters. Changing models adjusts incompatible parameters with a notice, without deleting or reordering images.
 
 ## Install on mobile
 
@@ -91,6 +92,12 @@ In a supported mobile browser, use “Install app” or “Add to Home Screen”
 3. Deploy and open your domain. Each user enters their own key in the app.
 
 Vercel hosts the frontend and a lightweight API proxy. Public routes have basic per-instance IP rate limiting. For stronger protection on a public deployment, add a WAF, shared rate-limit storage, or an access gateway in front of Vercel.
+
+### Optional: original images up to 15 MB
+
+Deploy the included Worker to your own Cloudflare account, set `NEXT_PUBLIC_SEEDANCE_WORKER_ORIGIN`, and rebuild Vercel. Users still enter only their own Ark key. No Blob/R2 storage is required; all visitors share the deployer's Worker allowance.
+
+See the [deployment and verification guide](docs/cloudflare-image-proxy.md). **Validate the Free plan CPU budget, 15 MB images, and Ark compatibility in Preview before enabling Production.** Local tests do not certify deployed free-tier performance. Without configuration, the original small-image path remains active.
 
 ## Request flow
 
@@ -106,6 +113,8 @@ Browser / PWA
           ↓
        Volcengine Ark Seedance API
 ```
+
+With the optional proxy enabled, large requests go `Browser → Cloudflare Worker (streamed validation) → Ark`, bypassing Vercel's large request ingress. Task polling still uses the flow above.
 
 ## Security notes
 

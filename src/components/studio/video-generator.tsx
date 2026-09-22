@@ -96,6 +96,7 @@ import {
   subscribeToStoredSeedanceModelSettings,
 } from "@/lib/client/model-settings-storage";
 import { LanguageSwitcher } from "@/components/studio/language-switcher";
+import { configuredWorkerOrigin, maxWorkerImageBytes, maxWorkerTotalImageBytes } from "@/lib/video/worker-upload";
 import { InstallPrompt } from "@/components/pwa/install-prompt";
 
 type VideoTaskState = "idle" | "submitting" | "queued" | "processing" | "paused" | "succeeded" | "failed";
@@ -275,8 +276,10 @@ export function VideoGenerator() {
     () => createGenerationRequestSnapshotCache(),
     [],
   );
+  const workerOrigin = configuredWorkerOrigin();
   const requestController = resolvedTarget
     ? createGenerationRequestController(requestSnapshotCache, {
+      workerOrigin,
       target: resolvedTarget,
       userPrompt: prompt,
       generationMode,
@@ -438,10 +441,10 @@ export function VideoGenerator() {
     const existingBytes = currentImages.reduce((total, image) => total + image.size, 0);
     const selectedBytes = selectedFiles.reduce((total, file) => total + file.size, 0);
     if (
-      selectedFiles.some((file) => file.size > maxReferenceImageBytes)
-      || existingBytes + selectedBytes > maxReferenceImageBytes
+      selectedFiles.some((file) => file.size > (workerOrigin ? maxWorkerImageBytes : maxReferenceImageBytes))
+      || existingBytes + selectedBytes > (workerOrigin ? maxWorkerTotalImageBytes : maxReferenceImageBytes)
     ) {
-      setReferenceError(t("err.totalTooLarge"));
+      setReferenceError(t(workerOrigin ? "err.totalTooLargeWorker" : "err.totalTooLarge"));
       return;
     }
 
@@ -535,10 +538,12 @@ export function VideoGenerator() {
       }
       if (!isCurrentSubmission()) return;
       const response = await fetch(
-        "/api/generate",
+        requestController.snapshot.endpoint,
         requestController.buildRequestInit(normalizedKey, controller.signal),
       );
-      const payload = (await response.json()) as { taskId?: string } & ApiErrorBody;
+      const payload = (await response.json().catch(() => ({
+        code: response.status === 413 ? "api.requestTooLarge" : "api.workerUnavailable",
+      }))) as { taskId?: string } & ApiErrorBody;
       if (!isCurrentSubmission()) return;
       if (!response.ok || !payload.taskId) {
         throw new Error(localizeApiError(payload, "api.createFailed"));
@@ -562,7 +567,9 @@ export function VideoGenerator() {
       setTask({
         taskId: "",
         status: "failed",
-        error: error instanceof Error ? error.message : t("api.createFailed"),
+        error: error instanceof TypeError && requestController.snapshot.workerBody
+          ? t("api.workerUnavailable")
+          : error instanceof Error ? error.message : t("api.createFailed"),
       });
     } finally {
       if (submitAbortRef.current === controller) submitAbortRef.current = null;
@@ -801,7 +808,7 @@ export function VideoGenerator() {
                   />
                   <span className="studio-upload-icon"><ImagePlus className="size-5" strokeWidth={1.6} /></span>
                   <span className="mt-3 block text-sm font-medium text-[var(--text)]">{t("ref.addTitle")}</span>
-                  <span className="mt-1 block text-xs text-[var(--text-3)]">{t("ref.addDesc")}</span>
+                  <span className="mt-1 block text-xs text-[var(--text-3)]">{t(workerOrigin ? "ref.addDescWorker" : "ref.addDesc")}</span>
                   <span className="mt-4 inline-flex items-center gap-1.5 text-xs font-medium text-[var(--text-2)] transition-colors group-hover:text-[var(--text)]"><Upload className="size-3.5" /> {t("ref.choose")}</span>
                 </label>
 
@@ -1113,6 +1120,11 @@ export function ApiKeySettings({
         <p id="seedance-api-key-note" className="mt-3 text-xs leading-5 text-[var(--text-3)]">
           {t("apiKey.localOnly")}
         </p>
+        {configuredWorkerOrigin() && (
+          <p className="mt-2 break-all text-xs leading-5 text-[var(--text-3)]">
+            {t("apiKey.workerNotice", { origin: configuredWorkerOrigin()! })}
+          </p>
+        )}
         {notice && <p className="mt-2 text-xs text-emerald-700" role="status">{notice}</p>}
         {error && <p className="mt-2 text-xs text-red-600" role="alert">{error}</p>}
       </form>

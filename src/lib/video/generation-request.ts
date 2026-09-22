@@ -13,6 +13,7 @@ import type {
   ResolvedSeedanceTarget,
 } from "@/lib/video/models";
 import { maxGenerationRequestBytes } from "@/lib/video/reference-image-limits";
+import { buildWorkerUpload, getWorkerOrigin, maxWorkerRequestBytes, workerUploadContentType } from "./worker-upload";
 
 export type GenerationReferenceImagePayload = {
   referenceImageUrls?: readonly string[];
@@ -20,6 +21,7 @@ export type GenerationReferenceImagePayload = {
 };
 
 export type GenerationRequestSnapshotInput = {
+  workerOrigin?: string;
   target: ResolvedSeedanceTarget;
   userPrompt: string;
   generationMode: GenerationMode;
@@ -37,6 +39,8 @@ export type GenerationRequestSnapshot = {
   finalPrompt: string;
   payload: Record<string, unknown>;
   body: string;
+  workerBody?: Blob;
+  endpoint: string;
   byteLength: number;
   exceedsByteLimit: boolean;
 };
@@ -108,15 +112,27 @@ export function buildGenerationRequestSnapshot(
     aspectRatio: input.aspectRatio,
     ...input.referenceImagePayload,
   };
-  const body = JSON.stringify(payload);
-  const byteLength = new TextEncoder().encode(body).byteLength;
+  const workerOrigin = getWorkerOrigin(input.workerOrigin);
+  const images = input.referenceImagePayload.referenceImageDataUrls;
+  // FileReader Data URLs contain ASCII without JSON escapes. Compute their
+  // envelope size without allocating a second giant JSON string on mobile.
+  const estimatedSize = images?.length
+    ? new TextEncoder().encode(JSON.stringify({ ...payload, referenceImageDataUrls: [] })).byteLength
+      + images.reduce((sum, image) => sum + image.length + 2, 0) + images.length - 1
+    : 0;
+  const workerBody = workerOrigin && images?.length && estimatedSize > maxGenerationRequestBytes
+    ? buildWorkerUpload(payload) : undefined;
+  const body = workerBody ? "" : JSON.stringify(payload);
+  const byteLength = workerBody?.size ?? new TextEncoder().encode(body).byteLength;
 
   return {
     finalPrompt,
     payload,
     body,
+    workerBody,
+    endpoint: workerBody ? `${workerOrigin}/api/generate` : "/api/generate",
     byteLength,
-    exceedsByteLimit: byteLength > maxGenerationRequestBytes,
+    exceedsByteLimit: byteLength > (workerBody ? maxWorkerRequestBytes : maxGenerationRequestBytes),
   };
 }
 
@@ -128,11 +144,14 @@ export function buildGenerationRequestInit(
   return {
     method: "POST",
     headers: {
-      "Content-Type": "application/json",
+      "Content-Type": snapshot.workerBody ? workerUploadContentType : "application/json",
       "x-seedance-api-key": apiKey,
     },
     signal,
-    body: snapshot.body,
+    credentials: "omit",
+    redirect: "error",
+    referrerPolicy: "no-referrer",
+    body: snapshot.workerBody ?? snapshot.body,
   };
 }
 
@@ -140,7 +159,8 @@ function snapshotInputsEqual(
   left: GenerationRequestSnapshotInput,
   right: GenerationRequestSnapshotInput,
 ): boolean {
-  return left.target.model === right.target.model
+  return left.workerOrigin === right.workerOrigin
+    && left.target.model === right.target.model
     && left.target.modelProfile === right.target.modelProfile
     && left.target.isCustomEndpoint === right.target.isCustomEndpoint
     && left.userPrompt === right.userPrompt

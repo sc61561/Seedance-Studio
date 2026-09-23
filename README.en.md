@@ -99,6 +99,8 @@ Deploy the included Worker to your own Cloudflare account, set `NEXT_PUBLIC_SEED
 
 See the [deployment and verification guide](docs/cloudflare-image-proxy.md). **Validate the Free plan CPU budget, 15 MB images, and Ark compatibility in Preview before enabling Production.** Local tests do not certify deployed free-tier performance. Without configuration, the original small-image path remains active.
 
+**Hosted-site status (2026-09-23):** The image Worker is deployed and its CORS preflight passed. The public site is not configured to use it yet, so its displayed default small-image limit still applies. A real 15 MB generation remains unverified.
+
 ## Request flow
 
 ```text

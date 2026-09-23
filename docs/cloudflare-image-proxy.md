@@ -2,6 +2,8 @@
 
 默认部署仍使用 Next.js `/api/generate`，不需要 Cloudflare。启用本通道后，浏览器将超过原 4,000,000 字节请求上限的图片请求直接发送到你部署的 Worker，绕过 Vercel Function 的入口限制。小图、纯文本和任务查询仍走原来的 Next.js 接口。
 
+当前本站部署状态（2026-09-23）：Worker 已部署到 Cloudflare，指定网站的 CORS 预检返回成功；`Lime/large-image-worker` 分支已推送。GitHub `main` 和公开 Vercel 网站尚未接入该分支，公开页面仍显示默认 3 MB 限制。未使用真实火山 Key 验证 15 MiB 创建任务、免费套餐 CPU 或多图性能。
+
 ## 当前能力与验证边界
 
 - 单张最多 **15 MiB**（15 × 1024 × 1024 字节），合计最多 **45 MiB**；界面简写为 MB。

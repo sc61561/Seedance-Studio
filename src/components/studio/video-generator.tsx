@@ -576,12 +576,13 @@ export function VideoGenerator() {
           <div className="flex items-center gap-3">
             <div className="flex size-9 items-center justify-center" aria-hidden="true">
               <Image
-                src="/icons/icon-192.png"
+                src="/icons/icon-192.png?v=20260927"
                 alt=""
                 width={36}
                 height={36}
                 className="size-9 object-contain"
                 priority
+                unoptimized
               />
             </div>
             <div>

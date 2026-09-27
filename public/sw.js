@@ -1,11 +1,11 @@
-const APP_CACHE = "seedance-shell-v3";
+const APP_CACHE = "seedance-shell-v4";
 const CACHE_PREFIX = "seedance-shell-";
 const PRECACHE_URLS = [
   "/offline.html",
   "/manifest.webmanifest",
-  "/icons/icon-192.png",
-  "/icons/icon-512.png",
-  "/icons/icon-maskable-512.png",
+  "/icons/icon-192.png?v=20260927",
+  "/icons/icon-512.png?v=20260927",
+  "/icons/icon-maskable-512.png?v=20260927",
 ];
 
 self.addEventListener("install", (event) => {

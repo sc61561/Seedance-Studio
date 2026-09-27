@@ -23,7 +23,7 @@ describe("root PWA metadata", () => {
           statusBarStyle: "default",
         },
         icons: expect.objectContaining({
-          apple: "/icons/icon-maskable-512.png",
+          apple: "/icons/icon-maskable-512.png?v=20260927",
         }),
       }),
     );

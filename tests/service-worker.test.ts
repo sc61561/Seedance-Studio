@@ -51,15 +51,17 @@ function request(url: string, overrides: Record<string, unknown> = {}) {
 }
 
 describe("service worker", () => {
-  it("activates shell v3 and removes earlier Seedance shell caches only", async () => {
+  it("activates shell v4 and removes old logo caches while keeping the current cache", async () => {
     const { cacheStorage, handlers, self } = loadServiceWorker();
-    cacheStorage.keys.mockResolvedValue(["seedance-shell-v1", "seedance-shell-v2", "unrelated-cache"]);
+    cacheStorage.keys.mockResolvedValue(["seedance-shell-v1", "seedance-shell-v2", "seedance-shell-v3", "seedance-shell-v4", "unrelated-cache"]);
     let activated: Promise<unknown> | undefined;
     handlers.get("activate")?.({ waitUntil: (value: Promise<unknown>) => { activated = value; } });
     await activated;
-    expect(cacheStorage.delete).toHaveBeenCalledTimes(2);
+    expect(cacheStorage.delete).toHaveBeenCalledTimes(3);
     expect(cacheStorage.delete).toHaveBeenCalledWith("seedance-shell-v1");
     expect(cacheStorage.delete).toHaveBeenCalledWith("seedance-shell-v2");
+    expect(cacheStorage.delete).toHaveBeenCalledWith("seedance-shell-v3");
+    expect(cacheStorage.delete).not.toHaveBeenCalledWith("seedance-shell-v4");
     expect(cacheStorage.delete).not.toHaveBeenCalledWith("unrelated-cache");
     expect(self.clients.claim).toHaveBeenCalledTimes(1);
   });
@@ -78,9 +80,9 @@ describe("service worker", () => {
     expect(cache.addAll).toHaveBeenCalledWith([
       "/offline.html",
       "/manifest.webmanifest",
-      "/icons/icon-192.png",
-      "/icons/icon-512.png",
-      "/icons/icon-maskable-512.png",
+      "/icons/icon-192.png?v=20260927",
+      "/icons/icon-512.png?v=20260927",
+      "/icons/icon-maskable-512.png?v=20260927",
     ]);
   });
 
